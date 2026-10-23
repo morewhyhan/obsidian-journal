@@ -16,7 +16,7 @@
 
 | 名称 | 用途 |
 | --- | --- |
-| [想做清单](想做清单.md) | 保存现在想做、但暂时不进入当前计划的事 |
+| [Someday](Someday.md) | A quiet place for ideas and possibilities to revisit later. Nothing here is a commitment. |
 | Template | 新建笔记时使用的模板 |
 | Attachment | 图片、文件等附件统一存放处 |
 

@@ -130,7 +130,7 @@ export function context(kind: Period, value: string) {
     week: weekKey(value),
     parent: parent
       ? "!" + wiki(route(parent[0], value), parent[1], parent[1])
-      : wiki("想做清单.md", "想做清单"),
+      : wiki("Someday.md", "Someday"),
     yearLink: ref("yearly", `${d.year}年`),
     quarterLink: ref("quarterly", `第${q}季度`),
     monthLink: ref("monthly", `${String(d.month).padStart(2, "0")}月`),

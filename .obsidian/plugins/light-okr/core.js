@@ -54,7 +54,7 @@ function context(kind,file) {
   const parents={daily:['weekly','本周重点','本周重点'],weekly:['monthly','本月重点','本月重点'],monthly:['quarterly','本季重点','本季重点'],quarterly:['yearly','今年重点','今年重点']};
   const parent=parents[kind];
   return {kind,date:iso(d),start:iso(first),end:iso(last),year:y,quarter:q,month:m,week:w.key,
-    parent:parent?'!'+link(route(parent[0],iso(d)),parent[1],parent[2]):link('想做清单.md','想做清单'),
+    parent:parent?'!'+link(route(parent[0],iso(d)),parent[1],parent[2]):link('Someday.md','Someday'),
     yearLink:link(route('yearly',iso(d)),y+'年'),quarterLink:link(route('quarterly',iso(d)),'第'+q+'季度'),monthLink:link(route('monthly',iso(d)),pad(m)+'月'),weekLink:link(route('weekly',iso(d)),w.key),
     previousWeekLink:link(route('weekly',iso(add(new Date(Math.max(w.mon,date(y,1,1))),-1))),'上一周'),nextWeekLink:link(route('weekly',iso(add(new Date(Math.min(add(w.mon,6),date(y,12,31))),1))),'下一周'),
     days:Array.from({length:Math.round((last-first)/DAY)+1},(_,i)=>{const dt=add(first,i);return link(route('daily',iso(dt)),['周一','周二','周三','周四','周五','周六','周日'][(dt.getUTCDay()||7)-1]);}).join(' · '),
