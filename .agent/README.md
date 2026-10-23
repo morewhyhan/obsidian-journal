@@ -14,4 +14,4 @@
 
 运行时由 Core 创建 `state/` 和 `data/`。它们保存习惯、任务、当天事实和短期投递状态，不属于用户可见的笔记正文，也不应手工维护。
 
-真正的笔记仍是 Markdown：日记、周期计划、Decisions、Manual、Someday 和附件都在工作区内；不把正文复制进 SQLite 或 Agent 会话。
+真正的笔记仍是 Markdown：日记、周期计划、Decisions、Manual、灵感和附件都在工作区内；不把正文复制进 SQLite 或 Agent 会话。

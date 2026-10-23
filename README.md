@@ -16,7 +16,7 @@
 
 | 名称 | 用途 |
 | --- | --- |
-| [Someday](Someday.md) | A quiet place for ideas and possibilities to revisit later. Nothing here is a commitment. |
+| [灵感](灵感.md) | 暂时不进入计划，只想先保留下来的想法。 |
 | Template | 新建笔记时使用的模板 |
 | Attachment | 图片、文件等附件统一存放处 |
 

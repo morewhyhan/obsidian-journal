@@ -71,4 +71,4 @@ else {
 
 ---
 
-[[Someday]] · [仓库说明](README.md)
+[[灵感]] · [仓库说明](README.md)

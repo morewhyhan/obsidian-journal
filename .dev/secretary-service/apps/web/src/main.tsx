@@ -527,11 +527,11 @@ function App() {
             </details>
           ))}
           <button
-            className="someday-link"
-            onClick={() => void open("Someday.md")}
+            className="inspiration-link"
+            onClick={() => void open("灵感.md")}
           >
             <Compass size={15} />
-            Someday
+            灵感
           </button>
         </div>
         <div className="sidebar-footer">
@@ -1285,7 +1285,7 @@ function App() {
           </header>
           <div className="conversation">
             {!messages.length && (
-              <p className="empty">把想保留的想法放在 Someday；安排和记录，由我承接。</p>
+              <p className="empty">把想保留的想法放在灵感；安排和记录，由我承接。</p>
             )}
             {messages.map((m, i) => (
               <div key={i} className={"bubble " + m.role}>

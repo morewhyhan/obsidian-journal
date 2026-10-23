@@ -33,7 +33,7 @@ class Dashboard {
     for(const [kind,label] of [['weekly','本周'],['monthly','本月'],['quarterly','本季'],['yearly','今年']]){
       this.action(periods,label,()=>this.plugin.engine.open(kind,this.today(dv)));
     }
-    this.link(periods,'Someday.md','Someday →');
+    this.link(periods,'灵感.md','灵感 →');
   }
   navigation(dv){
     // dv.el renders even an empty string into a child span. Create layout
