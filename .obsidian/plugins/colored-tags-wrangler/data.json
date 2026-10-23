@@ -1,0 +1,216 @@
+{
+  "TagColors": {
+    "ColorPicker": [
+      {
+        "tag_name": "Note/life/mood/Joy",
+        "color": {
+          "r": 129,
+          "g": 118,
+          "b": 4
+        },
+        "background_color": {
+          "r": 255,
+          "g": 222,
+          "b": 5
+        },
+        "luminance_offset": 0.15
+      },
+      {
+        "tag_name": "Note/life/mood/Sad",
+        "color": {
+          "r": 9,
+          "g": 52,
+          "b": 93
+        },
+        "background_color": {
+          "r": 77,
+          "g": 169,
+          "b": 239
+        },
+        "luminance_offset": 0.15
+      },
+      {
+        "tag_name": "Note/life/mood/fear",
+        "color": {
+          "r": 31,
+          "g": 31,
+          "b": 71
+        },
+        "background_color": {
+          "r": 122,
+          "g": 131,
+          "b": 255
+        },
+        "luminance_offset": 0.15
+      },
+      {
+        "tag_name": "Note/life/mood/angry",
+        "color": {
+          "r": 95,
+          "g": 7,
+          "b": 7
+        },
+        "background_color": {
+          "r": 249,
+          "g": 93,
+          "b": 93
+        },
+        "luminance_offset": 0.15
+      },
+      {
+        "tag_name": "Note/life/mood/Disgust",
+        "color": {
+          "r": 0,
+          "g": 61,
+          "b": 23
+        },
+        "background_color": {
+          "r": 117,
+          "g": 255,
+          "b": 140
+        },
+        "luminance_offset": 0.15
+      },
+      {
+        "tag_name": "Note/life/mood/anxiety",
+        "color": {
+          "r": 77,
+          "g": 37,
+          "b": 0
+        },
+        "background_color": {
+          "r": 255,
+          "g": 139,
+          "b": 61
+        },
+        "luminance_offset": 0.15
+      },
+      {
+        "tag_name": "Note/life/mood/envy",
+        "color": {
+          "r": 0,
+          "g": 92,
+          "b": 64
+        },
+        "background_color": {
+          "r": 10,
+          "g": 255,
+          "b": 214
+        },
+        "luminance_offset": 0.15
+      },
+      {
+        "tag_name": "Note/life/mood/embarrassed",
+        "color": {
+          "r": 71,
+          "g": 36,
+          "b": 36
+        },
+        "background_color": {
+          "r": 255,
+          "g": 179,
+          "b": 179
+        },
+        "luminance_offset": 0.15
+      },
+      {
+        "tag_name": "mood/life/mood/ennui",
+        "color": {
+          "r": 21,
+          "g": 26,
+          "b": 60
+        },
+        "background_color": {
+          "r": 29,
+          "g": 55,
+          "b": 252
+        },
+        "luminance_offset": 0.15
+      },
+      {
+        "tag_name": "Note/life/mood/nostalgia",
+        "color": {
+          "r": 41,
+          "g": 41,
+          "b": 41
+        },
+        "background_color": {
+          "r": 148,
+          "g": 148,
+          "b": 148
+        },
+        "luminance_offset": 0.15
+      },
+      {
+        "tag_name": "Note/life/mood/thanks",
+        "color": {
+          "r": 138,
+          "g": 119,
+          "b": 0
+        },
+        "background_color": {
+          "r": 232,
+          "g": 255,
+          "b": 117
+        },
+        "luminance_offset": 0.15
+      }
+    ],
+    "EnableMultipleTags": true,
+    "EnableSeparateBackground": true,
+    "EnableBackgroundOpacity": false,
+    "Values": {
+      "BackgroundOpacity": 0.45,
+      "LuminanceOffset": 0.15
+    }
+  },
+  "CSS": {
+    "NoteTags": true,
+    "NoteProperties": true,
+    "NoteBackgrounds": false,
+    "TagsNoWrap": true,
+    "TagsNoWrapText": "pre"
+  },
+  "FolderNote": {
+    "Enable": false,
+    "FolderTagLinks": [],
+    "EnableAutoDetect": true,
+    "EnableBackgroundOpacity": false,
+    "Values": {
+      "BackgroundOpacity": 0.45,
+      "ForceImportant": true,
+      "BorderRadius": "12px",
+      "Padding": "5px"
+    }
+  },
+  "Kanban": {
+    "Enable": true,
+    "EnableCards": false,
+    "EnableLists": false,
+    "HideHashtags": false,
+    "EnableBackgroundOpacity": false,
+    "Values": {
+      "BackgroundOpacity": 0.45,
+      "CardBackgroundOpacity": 0.2,
+      "CardBorderOpacity": 0.3,
+      "ListBackgroundOpacity": 0.2,
+      "ListBorderOpacity": 0.3
+    }
+  },
+  "Canvas": {
+    "Enable": false,
+    "EnableBackgroundOpacity": false,
+    "Values": {
+      "BackgroundOpacity": 0.45,
+      "CardBorderOpacity": 0.3,
+      "CardBackgroundLuminanceOffset": 0.15
+    }
+  },
+  "Debug": {
+    "Enable": false,
+    "EnableExperimentalCommands": false
+  },
+  "Info": {
+    "SettingsVersion": 14
+  }
+}

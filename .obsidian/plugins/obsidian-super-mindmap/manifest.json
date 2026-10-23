@@ -1,0 +1,11 @@
+{
+	"id": "obsidian-super-mindmap",
+	"name": "Super Mindmap",
+	"version": "2.11.2",
+	"minAppVersion": "0.9.12",
+	"description": "可以自由使用思维导图编辑markdown文件",
+	"author": "公众号「W阵雨」,持续更新",
+	"authorUrl": "",
+	"isDesktopOnly": false,
+	"signature": "f439f66863b21bd629362fb3429d5b2f"
+}

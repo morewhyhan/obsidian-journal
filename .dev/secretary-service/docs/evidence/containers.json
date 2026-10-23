@@ -1,0 +1,10 @@
+{
+  "at": "2026-10-23T09:21:07.712Z",
+  "status": "blocked",
+  "scope": "generated fixtures; no real model, QQ, GitHub or public domain",
+  "steps": [],
+  "error": {
+    "stage": "docker_engine",
+    "code": "DOCKER_ENGINE_UNAVAILABLE"
+  }
+}

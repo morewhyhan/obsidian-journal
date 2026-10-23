@@ -1,0 +1,17 @@
+{
+  "at": "2026-10-23T06:06:25.347Z",
+  "platform": "linux",
+  "release": "6.18.33.1-microsoft-standard-WSL2",
+  "node": "v24.11.0",
+  "cpus_visible": 2,
+  "configured_memory_max": "2147483648",
+  "configured_cpu_max": "200000 100000",
+  "files": 5000,
+  "total_markdown_bytes": 104857600,
+  "samples": 100,
+  "first_search_ms": 261.62038099999995,
+  "read_p95_ms": 5.1578880000001845,
+  "save_p95_ms": 22.027498999999807,
+  "max_rss_kib": 320872,
+  "passed": true
+}

@@ -1,0 +1,17 @@
+{
+  "blue-topaz-theme@@color-scheme-options": "color-scheme-options-topaz-nord",
+  "blue-topaz-theme@@folder-style-change-options-colorful-subfolder": "folder-colorful-five",
+  "blue-topaz-theme@@bt-toggle-colorful-folder": true,
+  "blue-topaz-theme@@folder-note-dot": true,
+  "blue-topaz-theme@@folder-note-underline": false,
+  "blue-topaz-theme@@folder-icons": true,
+  "blue-topaz-theme@@toggle-inline-title-background": false,
+  "supercharged-links@@ef41-4b87-before": "💡",
+  "supercharged-links@@c-ef41-4b87-use-background": true,
+  "supercharged-links@@ef41-4b87-background-color": "#8DD3FF",
+  "supercharged-links@@ef41-4b87-color": "#FFFFFF",
+  "supercharged-links@@ef1b-4050-before": "🌟",
+  "supercharged-links@@c-ef1b-4050-use-background": true,
+  "supercharged-links@@ef1b-4050-background-color": "#9EF5DF",
+  "supercharged-links@@ef1b-4050-color": "#FFFFFF"
+}

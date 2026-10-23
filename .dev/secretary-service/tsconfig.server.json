@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": false,
+    "rootDir": ".",
+    "outDir": "dist/server",
+    "jsx": "react-jsx",
+    "types": ["node"]
+  },
+  "include": ["apps/core", "apps/pi-adapter", "packages"],
+  "exclude": ["apps/web", "tests", "node_modules", "dist"]
+}

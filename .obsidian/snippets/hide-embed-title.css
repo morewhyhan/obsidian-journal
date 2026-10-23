@@ -1,0 +1,10 @@
+/* === A. 阅读视图：隐藏嵌入块里出现的第一个标题（h1~h6）=== */
+.internal-embed .markdown-embed-content .markdown-preview-section :is(h1,h2,h3,h4,h5,h6):first-of-type {
+display: none !important;
+}
+
+/* 去掉标题隐藏后常见的顶部空白 */
+.internal-embed .markdown-embed-content .markdown-preview-section {
+padding-top: 0 !important;
+margin-top: 0 !important;
+}

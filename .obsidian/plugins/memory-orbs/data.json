@@ -1,0 +1,78 @@
+{
+  "diaryDir": "",
+  "moodTagPrefix": "#Note/life/mood/",
+  "coreTagKey": "core",
+  "orbGap": 3,
+  "pipelineRowGap": 9,
+  "daySectionGap": 12,
+  "weekSectionGap": 0,
+  "fontSize": 16,
+  "visualTheme": "classic",
+  "customEmotions": [
+    {
+      "key": "Joy",
+      "label": "快乐",
+      "character": "乐乐",
+      "color": "#fbeb37"
+    },
+    {
+      "key": "sad",
+      "label": "伤心",
+      "character": "忧忧",
+      "color": "#8abdf5"
+    },
+    {
+      "key": "angry",
+      "label": "生气",
+      "character": "怒怒",
+      "color": "#ff9185"
+    },
+    {
+      "key": "disgust",
+      "label": "讨厌",
+      "character": "厌厌",
+      "color": "#75eaa6"
+    },
+    {
+      "key": "fear",
+      "label": "害怕",
+      "character": "怕怕",
+      "color": "#df94ff"
+    },
+    {
+      "key": "anxiety",
+      "label": "焦虑",
+      "character": "焦焦",
+      "color": "#ffa947"
+    },
+    {
+      "key": "envy",
+      "label": "慕慕",
+      "character": "慕慕",
+      "color": "#1affd1"
+    },
+    {
+      "key": "embarrassed",
+      "label": "尴尬",
+      "character": "尬尬",
+      "color": "#ffa8d4"
+    },
+    {
+      "key": "ennui",
+      "label": "无聊",
+      "character": "丧丧",
+      "color": "#6f94b8"
+    },
+    {
+      "key": "nostalgia",
+      "label": "怀旧",
+      "character": "怀旧奶奶",
+      "color": "#cccccc"
+    }
+  ],
+  "activated": false,
+  "activatedEmail": "",
+  "activationCode": "",
+  "lastVerifiedAt": 0,
+  "verifyFailCount": 0
+}

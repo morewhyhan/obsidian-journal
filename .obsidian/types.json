@@ -1,0 +1,10 @@
+{
+  "types": {
+    "type": "text",
+    "date": "date",
+    "start": "date",
+    "end": "date",
+    "week": "text",
+    "tags": "tags"
+  }
+}

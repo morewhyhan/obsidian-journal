@@ -1,0 +1,21 @@
+{
+  "at": "2026-10-23T09:22:46.136Z",
+  "scope": "read-only path mapping, inventory hashes and bounded template rendering; no diary text sent to a model",
+  "status": "passed",
+  "markdown_count": 170,
+  "total_markdown_bytes": 330657,
+  "notes_over_2mib": 0,
+  "legacy_files_registered": 157,
+  "legacy_routes_registered": 153,
+  "legacy_routes_resolved": 153,
+  "templates": {
+    "daily": "supported_without_eval",
+    "weekly": "supported_without_eval",
+    "monthly": "supported_without_eval",
+    "quarterly": "supported_without_eval",
+    "yearly": "supported_without_eval"
+  },
+  "inventory_sha256_before": "22d751c9e0dd9b699fff5a761a4cf9c4dbaefaf318a0512d4b2ded6f8398527e",
+  "inventory_sha256_after": "22d751c9e0dd9b699fff5a761a4cf9c4dbaefaf318a0512d4b2ded6f8398527e",
+  "notes_changed": false
+}

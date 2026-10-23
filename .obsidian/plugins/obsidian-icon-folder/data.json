@@ -1,0 +1,59 @@
+{
+  "settings": {
+    "migrated": 6,
+    "iconPacksPath": ".obsidian/icons",
+    "fontSize": 17,
+    "emojiStyle": "native",
+    "iconColor": "#8793a5",
+    "recentlyUsedIcons": [],
+    "recentlyUsedIconsSize": 5,
+    "rules": [],
+    "extraMargin": {
+      "top": 11,
+      "right": 4,
+      "bottom": 0,
+      "left": 6
+    },
+    "iconInTabsEnabled": false,
+    "iconInTitleEnabled": false,
+    "iconInTitlePosition": "inline",
+    "iconInFrontmatterEnabled": false,
+    "iconInFrontmatterFieldName": "icon",
+    "iconColorInFrontmatterFieldName": "iconColor",
+    "iconsBackgroundCheckEnabled": false,
+    "iconsInNotesEnabled": true,
+    "iconsInLinksEnabled": true,
+    "iconIdentifier": ":",
+    "lucideIconPackType": "native",
+    "debugMode": false,
+    "useInternalPlugins": false
+  },
+  "Attachment": {
+    "iconName": "LiPaperclip",
+    "iconColor": "#99a3af"
+  },
+  "Template": {
+    "iconName": "LiFiles",
+    "iconColor": "#ad9d7e"
+  },
+  "01. Daily": {
+    "iconName": "LiCalendarDays",
+    "iconColor": "#6d9e96"
+  },
+  "02. Decisions": {
+    "iconName": "LiCompass",
+    "iconColor": "#789bc0"
+  },
+  "总体目标.md": {
+    "iconName": "LiFlag",
+    "iconColor": "#789bc0"
+  },
+  "README.md": {
+    "iconName": "LiBookOpen",
+    "iconColor": "#99a3af"
+  },
+  "MOC.md": {
+    "iconName": "LiLayoutDashboard",
+    "iconColor": "#789bc0"
+  }
+}

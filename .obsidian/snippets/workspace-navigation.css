@@ -1,0 +1,18 @@
+/* Quiet, distinct navigation colors; inherited by each block's descendants. */
+.nav-files-container { --workspace-nav-icon: #8793a5; }
+.theme-dark .nav-files-container { --workspace-nav-icon: #a2afbf; }
+.nav-folder:has(> .nav-folder-title[data-path="01. Daily"]) { --workspace-nav-icon: #6d9e96; }
+.nav-folder:has(> .nav-folder-title[data-path="02. Decisions"]) { --workspace-nav-icon: #789bc0; }
+.nav-folder:has(> .nav-folder-title[data-path="03. Manual"]) { --workspace-nav-icon: #a18bb6; }
+.nav-folder:has(> .nav-folder-title[data-path="Attachment"]) { --workspace-nav-icon: #99a3af; }
+.nav-folder:has(> .nav-folder-title[data-path="Template"]) { --workspace-nav-icon: #ad9d7e; }
+.nav-files-container .nav-folder-title-content::before,
+.nav-files-container .nav-file-title-content::before {
+  background-color: var(--workspace-nav-icon) !important;
+  filter: none !important;
+}
+.nav-files-container :is(.nav-folder-title, .nav-file-title) :is(.iconize-icon, .tree-item-icon) {
+  color: var(--workspace-nav-icon) !important;
+}
+/* Icon Folder supplies its own icon; avoid a second theme icon beside it. */
+.nav-files-container :is(.nav-folder-title, .nav-file-title):has(.iconize-icon) :is(.nav-folder-title-content, .nav-file-title-content)::before { display: none; }

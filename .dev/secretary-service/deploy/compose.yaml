@@ -1,0 +1,97 @@
+services:
+  core:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:24-bookworm-slim}
+    image: private-secretary:local
+    restart: unless-stopped
+    read_only: true
+    user: "1000:1000"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    env_file:
+      [
+        "${SECRETARY_SECRETS_FILE:?Set the absolute secret file outside the vault}",
+      ]
+    environment:
+      NODE_ENV: production
+      SECRETARY_HOST: 0.0.0.0
+      SECRETARY_VAULT_ROOT: /vault
+      SECRETARY_PI_URL: http://pi:3181
+      SECRETARY_PUBLIC_ORIGIN: https://${SECRETARY_DOMAIN:?Set domain}
+      SECRETARY_TRUSTED_PROXY_IP: 10.83.0.4
+    volumes:
+      - type: bind
+        source: ${SECRETARY_VAULT_HOST:?Set absolute vault host path}
+        target: /vault
+        bind: {create_host_path: false}
+    networks:
+      private: {ipv4_address: 10.83.0.2}
+      egress: {}
+    mem_limit: 512m
+    cpus: 1
+    stop_grace_period: 45s
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:3180/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging: { driver: json-file, options: { max-size: 10m, max-file: "7" } }
+  pi:
+    image: private-secretary:local
+    command: [node, dist/server/apps/pi-adapter/main.js]
+    restart: unless-stopped
+    read_only: true
+    user: "1000:1000"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    environment:
+      NODE_ENV: production
+      SECRETARY_PI_INTERNAL_TOKEN: ${SECRETARY_PI_INTERNAL_TOKEN:?Set internal token in deployment env}
+      SECRETARY_CORE_MODEL_URL: http://core:3180/internal/model/v1
+      LLM_MODEL: ${LLM_MODEL:?Set model ID}
+      HOME: /tmp
+    networks:
+      private: {ipv4_address: 10.83.0.3}
+    mem_limit: 512m
+    cpus: 1
+    depends_on: [core]
+    logging: { driver: json-file, options: { max-size: 10m, max-file: "7" } }
+  caddy:
+    image: ${CADDY_IMAGE:-caddy:2-alpine}
+    restart: unless-stopped
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      SECRETARY_DOMAIN: ${SECRETARY_DOMAIN}
+      SECRETARY_CORE_UPSTREAM: 10.83.0.2:3180
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      private: {ipv4_address: 10.83.0.4}
+      egress: {}
+    depends_on: [core]
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: [no-new-privileges:true]
+    logging: { driver: json-file, options: { max-size: 10m, max-file: "7" } }
+networks:
+  private:
+    internal: true
+    ipam: {config: [{subnet: 10.83.0.0/24}]}
+  egress: {}
+volumes:
+  caddy_data: {}
+  caddy_config: {}

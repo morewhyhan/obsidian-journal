@@ -1,0 +1,36 @@
+{
+  "plugins": [
+    "light-okr",
+    "obsidian-super-mindmap",
+    "callout-manager",
+    "cmdr",
+    "colored-tags-wrangler",
+    "contribution-graph",
+    "dataview",
+    "dust-calendar",
+    "homepage",
+    "memory-orbs",
+    "mousewheel-image-zoom",
+    "obsidian-basetag",
+    "obsidian-excalidraw-plugin",
+    "obsidian-image-toolkit",
+    "obsidian-style-settings",
+    "oz-clear-unused-images",
+    "recent-files-obsidian",
+    "supercharged-links-obsidian",
+    "tag-summary-plugin",
+    "templater-obsidian",
+    "terminal",
+    "obsidian-clipper",
+    "obsidian-icon-folder",
+    "obsidian-kanban",
+    "obsidian-minimal-settings"
+  ],
+  "calendarVersion": "1.4.0",
+  "memoryOrbsVersion": "1.0.3",
+  "layout": "01. Daily/自然年/自然季度/月/ISO周/日记",
+  "disabledByDefault": [
+    "obsidian-minimal-settings"
+  ],
+  "theme": "Blue Topaz"
+}
