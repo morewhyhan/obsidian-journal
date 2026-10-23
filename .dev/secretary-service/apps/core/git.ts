@@ -32,7 +32,7 @@ export const backupPath = (p: string) => {
   return (
     /^(01\. Daily|02\. Decisions|03\. Manual|Attachment|Template)\//.test(p) ||
     (!p.startsWith(".agent/") && p.endsWith(".md")) ||
-    ["Inspiration.md", "MOC.md", "README.md"].includes(p) ||
+    ["MOC.md", "README.md"].includes(p) ||
     /^\.agent\/(state|context|prompts)\//.test(p) ||
     [".agent/config.json", ".agent/SPEC.md"].includes(p)
   );

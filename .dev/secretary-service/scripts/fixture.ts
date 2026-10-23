@@ -15,7 +15,6 @@ const root =
 fs.mkdirSync(root, { recursive: true });
 const empty = [
   ["README.md", "# 我的空间\n"],
-  ["Inspiration.md", "# Inspiration\n\n"],
   ["02. Decisions/关于选择.md", "# 关于选择\n\n先把问题写下来。\n"],
   [
     "03. Manual/开始一个小动作.md",

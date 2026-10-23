@@ -71,4 +71,4 @@ else {
 
 ---
 
-[[Inspiration]] · [仓库说明](README.md)
+[仓库说明](README.md)

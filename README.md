@@ -16,7 +16,6 @@
 
 | 名称 | 用途 |
 | --- | --- |
-| [Inspiration](Inspiration.md) | A quiet place for ideas worth keeping, without turning them into commitments. |
 | Template | 新建笔记时使用的模板 |
 | Attachment | 图片、文件等附件统一存放处 |
 
