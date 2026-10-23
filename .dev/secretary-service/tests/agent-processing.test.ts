@@ -132,3 +132,19 @@ it("a model action without the context version is rejected and reported per grou
   ).toEqual([{ status: "conflict", reason: "VERSION_CONFLICT" }]);
   expect(h.store.day("2026-10-23").occurrences).toHaveLength(0);
 });
+
+it("an explicit directory request receives a bounded read-only inventory", async () => {
+  const h = harness();
+  cleanups.push(() => h.close());
+
+  const inventory = h.core.context(h.input("请列出我现在目录下面有什么文件")) as any;
+  expect(inventory.workspace_inventory).toMatchObject({
+    scope: "configured_vault",
+    read_only: true,
+    paths: [],
+    truncated: false,
+  });
+
+  const ordinary = h.core.context(h.input("提醒我今晚读一句英语")) as any;
+  expect(ordinary.workspace_inventory).toBeUndefined();
+});

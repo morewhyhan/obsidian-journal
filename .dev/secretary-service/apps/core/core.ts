@@ -40,6 +40,18 @@ export interface AgentAdapter {
   compose?(facts: unknown): Promise<{ text: string }>;
   close?(): void;
 }
+
+function requestsWorkspaceInventory(text: string) {
+  const value = text.replace(/\s+/g, "").toLocaleLowerCase();
+  return (
+    /(?:列出|查看|看看|读一下|读取|显示|告诉我).*(?:目录|文件夹|文件清单|仓库|笔记库)/.test(
+      value,
+    ) ||
+    /(?:目录|文件夹|文件清单|仓库|笔记库).*(?:有什么|有哪些|清单|内容)/.test(
+      value,
+    )
+  );
+}
 export class Core {
   documents: DocumentOperations;
   subscribers = new Set<(event: { type: string; data: unknown }) => void>();
@@ -1049,6 +1061,15 @@ export class Core {
         })),
       documents,
     };
+    if (requestsWorkspaceInventory(input.text)) {
+      const paths = this.store.files.list();
+      (context as any).workspace_inventory = {
+        scope: "configured_vault",
+        read_only: true,
+        paths: paths.slice(0, 500),
+        truncated: paths.length > 500,
+      };
+    }
     if (JSON.stringify(context).length > 12000)
       throw new AppError("CONTEXT_TOO_LARGE", "相关事项较多，请指定一个事项");
     return context;
