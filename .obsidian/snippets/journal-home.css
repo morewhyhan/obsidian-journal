@@ -1,0 +1,148 @@
+/* Only the MOC homepage uses this layout; diary typography stays independent. */
+.journal-home {
+  --file-line-width: 1060px;
+  --journal-teal: #6d9e96;
+  --journal-blue: #789bc0;
+  --journal-purple: #a18bb6;
+}
+.journal-home .markdown-preview-sizer {
+  max-width: 1060px !important;
+  margin-inline: auto;
+}
+.journal-home .inline-title,
+.journal-home .metadata-container { display: none; }
+.journal-home h1 {
+  margin-bottom: .5em;
+  border: 0;
+  background: none;
+}
+.journal-home h2 {
+  margin-top: 1.8em;
+  padding: 0 0 .45em;
+  border: 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: none;
+  font-size: 1.15em;
+}
+.journal-home .journal-start {
+  padding: 1.1em 1.25em;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 14px;
+  background: var(--background-secondary);
+}
+.journal-home .journal-date {
+  margin: 0 0 .8em;
+  color: var(--text-muted);
+  font-size: .9em;
+}
+.journal-home .journal-primary {
+  min-height: 42px;
+  padding: .55em 1.1em;
+  background: var(--journal-teal);
+  color: #102b28;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-weight: 600;
+  box-shadow: none;
+}
+.journal-home .journal-primary:hover { filter: brightness(1.08); }
+.journal-home .journal-periods {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .35em .6em;
+  margin-top: .9em;
+  font-size: .85em;
+}
+.journal-home .journal-label { color: var(--text-muted); margin-right: .2em; }
+.journal-home .journal-periods button {
+  padding: .3em .65em;
+  height: auto;
+  min-height: 32px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-primary);
+  box-shadow: none;
+}
+.journal-home .journal-blocks {
+  display: grid !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  width: 100%;
+  min-width: 0;
+  align-items: stretch;
+  gap: 12px;
+}
+/* Also protect already-open views rendered by the previous plugin version. */
+.journal-home .journal-blocks > :not(.journal-card) { display: none !important; }
+.journal-home .journal-card {
+  --journal-card-color: var(--journal-teal);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  box-sizing: border-box;
+  width: auto;
+  min-width: 0;
+  margin: 0;
+  padding: .85em;
+  border: 1px solid var(--background-modifier-border);
+  border-top: 3px solid var(--journal-card-color);
+  border-radius: 10px;
+  background: var(--background-secondary);
+}
+.journal-home .journal-decision { --journal-card-color: var(--journal-blue); }
+.journal-home .journal-manual { --journal-card-color: var(--journal-purple); }
+.journal-home .journal-card h3 {
+  margin: 0;
+  width: 100%;
+  min-height: 3em;
+  font-size: .95em;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  background: none;
+  border: 0;
+}
+.journal-home .journal-card h3 a { color: var(--text-normal); text-decoration: none; }
+.journal-home .journal-card p {
+  flex-grow: 1;
+  margin: .65em 0 1em;
+  color: var(--text-muted);
+  font-size: .85em;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  text-indent: 0;
+}
+.journal-home .journal-card > a,
+.journal-home .journal-card > button { font-size: .8em; }
+.journal-home .journal-card > button {
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  box-shadow: none;
+  min-height: 32px;
+}
+.journal-home a:focus-visible,
+.journal-home button:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 3px;
+}
+.journal-home .contribution-graph .main .charts,
+.journal-home .contribution-graph .main .charts:hover { overflow-x: auto; }
+.journal-home .journal-recent ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .65em;
+  list-style: none;
+  padding: 0;
+  margin: .3em 0 1em;
+}
+.journal-home .journal-recent li { margin: 0; }
+.journal-home .journal-recent li a {
+  display: inline-block;
+  padding: .4em .75em;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 7px;
+  font-size: .85em;
+  text-decoration: none;
+}
+.journal-home .journal-recent > a,
+.journal-home .journal-empty { font-size: .85em; color: var(--text-muted); }

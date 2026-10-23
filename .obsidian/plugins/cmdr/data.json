@@ -1,0 +1,42 @@
+{
+  "confirmDeletion": true,
+  "showAddCommand": true,
+  "debug": false,
+  "editorMenu": [],
+  "fileMenu": [],
+  "leftRibbon": [
+    {
+      "id": "obsidian-super-mindmap:split-markdown-mindmap-View",
+      "icon": "lucide-align-horizontal-justify-center",
+      "name": "Super Mindmap: 分屏:一半导图一半markdown",
+      "mode": "any"
+    },
+    {
+      "id": "obsidian-super-mindmap:Toggle to markdown or mindmap",
+      "icon": "lucide-activity",
+      "name": "Super Mindmap: Toggle to markdown/mindmap mode",
+      "mode": "any"
+    }
+  ],
+  "rightRibbon": [],
+  "titleBar": [],
+  "statusBar": [],
+  "pageHeader": [],
+  "macros": [],
+  "explorer": [],
+  "hide": {
+    "statusbar": [],
+    "leftRibbon": []
+  },
+  "spacing": 8,
+  "advancedToolbar": {
+    "rowHeight": 48,
+    "rowCount": 1,
+    "spacing": 0,
+    "buttonWidth": 48,
+    "columnLayout": false,
+    "mappedIcons": [],
+    "tooltips": false,
+    "heightOffset": 0
+  }
+}

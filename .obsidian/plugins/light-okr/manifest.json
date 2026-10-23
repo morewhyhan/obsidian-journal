@@ -1,0 +1,9 @@
+{
+  "id": "light-okr",
+  "name": "轻量 OKR 联动",
+  "version": "1.4.4",
+  "minAppVersion": "1.5.12",
+  "description": "主页导航、日记与周期计划联动、旧笔记定位。",
+  "author": "Local",
+  "isDesktopOnly": false
+}

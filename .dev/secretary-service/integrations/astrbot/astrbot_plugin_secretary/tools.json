@@ -1,0 +1,1048 @@
+[
+  {
+    "name": "secretary",
+    "description": "原生应用功能：create_period使用Template统一引擎生成日周月季年笔记及父计划；state完整查询台账；periods路径；day事实；status运行状态；preferences偏好；trash/restore_note恢复；history/history_content/restore_version版本。不猜字段，不要求打开Obsidian。只有用户要求才创建或恢复。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "enum": [
+            "preferences",
+            "capabilities",
+            "periods",
+            "create_period",
+            "state",
+            "day",
+            "status",
+            "trash",
+            "restore_note",
+            "history",
+            "history_content",
+            "restore_version"
+          ]
+        },
+        "kind": {
+          "enum": [
+            "daily",
+            "weekly",
+            "monthly",
+            "quarterly",
+            "yearly"
+          ]
+        },
+        "date": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "scope": {
+          "enum": [
+            "all",
+            "habits",
+            "tasks",
+            "plans",
+            "controls",
+            "proposals"
+          ]
+        },
+        "query": {
+          "type": "string"
+        },
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "path": {
+          "type": "string"
+        },
+        "recovery_id": {
+          "type": "string"
+        },
+        "commit": {
+          "type": "string"
+        },
+        "base_hash": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "workspace",
+    "description": "真实授权仓库文件工具：list/search/read/write/edit/rename/delete。直接自主查找读取，无需预附清单；offset分页。已有文件修改先read拿hash。禁止库外与隐藏文件；内部记忆仅.agent/context/memory.md；新周期笔记必须secretary.create_period。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "enum": [
+            "list",
+            "search",
+            "read",
+            "write",
+            "edit",
+            "rename",
+            "delete"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        },
+        "old_text": {
+          "type": "string"
+        },
+        "new_text": {
+          "type": "string"
+        },
+        "new_path": {
+          "type": "string"
+        },
+        "base_hash": {
+          "type": "string"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "operation"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "get_context",
+    "description": "读取本次已授权事项，空ids返回预载对象；完整台账使用secretary.state。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "purpose": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ids",
+        "purpose"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "submit_proposal",
+    "description": "一次提交最终答复与业务动作；discussion写给用户的回答，action_groups交Core校验执行。提案接收不等于已执行。没有动作时也须提供实际答复。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action_groups": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "properties": {
+              "action_identity": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              },
+              "actions": {
+                "type": "array",
+                "maxItems": 20,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "enum": [
+                        "create_habit",
+                        "update_habit",
+                        "create_task",
+                        "update_task",
+                        "report_habit",
+                        "report_event",
+                        "update_task_progress",
+                        "complete_task",
+                        "reopen_task",
+                        "schedule",
+                        "reschedule",
+                        "pause_contact",
+                        "resume_contact",
+                        "cancel_item",
+                        "remember_fact",
+                        "link_diary",
+                        "project_diary"
+                      ]
+                    },
+                    "target_id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100
+                    },
+                    "expected_version": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "title": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "min_behavior": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    },
+                    "optional_target": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "value": {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            "unit": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 30
+                            }
+                          },
+                          "required": [
+                            "value",
+                            "unit"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "recurrence": {
+                      "type": "object",
+                      "properties": {
+                        "weekdays": {
+                          "type": "array",
+                          "minItems": 1,
+                          "maxItems": 7,
+                          "uniqueItems": true,
+                          "items": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 7
+                          }
+                        },
+                        "starts_on": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 10,
+                          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                        },
+                        "ends_on": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 10,
+                              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "weekdays",
+                        "starts_on"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "anchor": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "const": "time_window"
+                            },
+                            "local_start": {
+                              "type": "string",
+                              "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+                            },
+                            "local_end": {
+                              "type": "string",
+                              "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "local_start",
+                            "local_end"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "const": "event"
+                            },
+                            "event_key": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 100
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "event_key"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 30,
+                      "enum": [
+                        "draft",
+                        "active",
+                        "paused",
+                        "retired",
+                        "unreported",
+                        "did",
+                        "did_not",
+                        "skipped",
+                        "ready",
+                        "in_progress",
+                        "blocked",
+                        "met",
+                        "unmet",
+                        "pending"
+                      ],
+                      "description": "report_habit：做了=did、没做=did_not、跳过=skipped、未确认=unreported。不能用completed/done代替习惯事实；任务完成用complete_task。"
+                    },
+                    "note_refs": {
+                      "type": "array",
+                      "maxItems": 12,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 1024
+                          },
+                          "heading": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "relation": {
+                            "enum": [
+                              "motivation",
+                              "plan",
+                              "method",
+                              "evidence"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "path",
+                          "relation"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "outcome": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2000
+                    },
+                    "acceptance": {
+                      "type": "array",
+                      "maxItems": 20,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "kind": {
+                            "enum": [
+                              "check",
+                              "count",
+                              "artifact"
+                            ]
+                          },
+                          "description": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 2000
+                          },
+                          "target": {
+                            "anyOf": [
+                              {
+                                "type": "number",
+                                "minimum": 0
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "unit": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 30
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "verification": {
+                            "enum": [
+                              "self_report",
+                              "tool"
+                            ]
+                          },
+                          "artifact_ref": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 1024
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "description"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "due_at": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "verification": {
+                      "enum": [
+                        "self_report",
+                        "tool"
+                      ]
+                    },
+                    "parent_task_id": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 100
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "supporting_habit_ids": {
+                      "type": "array",
+                      "maxItems": 20,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100
+                      }
+                    },
+                    "business_date": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 10,
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    "quantity": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "value": {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            "unit": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 30
+                            }
+                          },
+                          "required": [
+                            "value",
+                            "unit"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "optional_target_met": {
+                      "anyOf": [
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "event_key": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100
+                    },
+                    "criterion_id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    },
+                    "value": {
+                      "anyOf": [
+                        {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "unit": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 30
+                    },
+                    "mode": {
+                      "enum": [
+                        "total",
+                        "increment"
+                      ]
+                    },
+                    "report": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    },
+                    "task_status": {
+                      "enum": [
+                        "in_progress",
+                        "blocked"
+                      ]
+                    },
+                    "verification_pending": {
+                      "type": "boolean"
+                    },
+                    "window_start": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "window_end": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "available_windows": {
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 24,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "start": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "end": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        },
+                        "required": [
+                          "start",
+                          "end"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "duration_minutes": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "next_action": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2000
+                    },
+                    "initial_plan": {
+                      "type": "object",
+                      "properties": {
+                        "window_start": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "window_end": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "duration_minutes": {
+                          "type": "number",
+                          "exclusiveMinimum": 0
+                        },
+                        "next_action": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "kind": {
+                          "enum": [
+                            "fixed",
+                            "window",
+                            "flexible"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "window_start",
+                        "window_end",
+                        "duration_minutes",
+                        "next_action"
+                      ],
+                      "additionalProperties": false,
+                      "description": "用户同时交代新任务和执行时间时放在这里，Core原子创建任务与安排；不要猜测尚未生成的任务ID。没有明确窗口则省略，不承诺已经安排提醒。"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100
+                    },
+                    "ends_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "fact": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    },
+                    "path": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 1024
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ],
+                  "additionalProperties": false,
+                  "allOf": [
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "create_habit"
+                          }
+                        }
+                      },
+                      "then": {
+                        "properties": {
+                          "status": {
+                            "enum": [
+                              "draft",
+                              "active"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "update_habit"
+                          }
+                        }
+                      },
+                      "then": {
+                        "properties": {
+                          "status": {
+                            "enum": [
+                              "draft",
+                              "active",
+                              "paused",
+                              "retired"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "create_task"
+                          }
+                        }
+                      },
+                      "then": {
+                        "properties": {
+                          "status": {
+                            "enum": [
+                              "draft",
+                              "ready"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "update_task"
+                          }
+                        }
+                      },
+                      "then": {
+                        "properties": {
+                          "status": {
+                            "enum": [
+                              "draft",
+                              "ready",
+                              "in_progress",
+                              "blocked"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "report_habit"
+                          }
+                        }
+                      },
+                      "then": {
+                        "properties": {
+                          "status": {
+                            "enum": [
+                              "unreported",
+                              "did",
+                              "did_not",
+                              "skipped"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "update_task_progress"
+                          }
+                        }
+                      },
+                      "then": {
+                        "properties": {
+                          "status": {
+                            "enum": [
+                              "met",
+                              "unmet",
+                              "pending"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "create_task"
+                          },
+                          "status": {
+                            "const": "ready"
+                          }
+                        }
+                      },
+                      "then": {
+                        "properties": {
+                          "acceptance": {
+                            "type": "array",
+                            "minItems": 1
+                          }
+                        },
+                        "required": [
+                          "acceptance"
+                        ]
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "enum": [
+                              "schedule",
+                              "reschedule"
+                            ]
+                          }
+                        }
+                      },
+                      "then": {
+                        "properties": {
+                          "kind": {
+                            "enum": [
+                              "fixed",
+                              "window",
+                              "flexible"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "remember_fact"
+                          }
+                        }
+                      },
+                      "then": {
+                        "properties": {
+                          "kind": {
+                            "const": "user_confirmed"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "enum": [
+                              "update_habit",
+                              "update_task",
+                              "report_habit",
+                              "report_event",
+                              "update_task_progress",
+                              "complete_task",
+                              "reopen_task",
+                              "schedule",
+                              "reschedule",
+                              "cancel_item",
+                              "link_diary",
+                              "project_diary"
+                            ]
+                          }
+                        }
+                      },
+                      "then": {
+                        "required": [
+                          "target_id",
+                          "expected_version"
+                        ]
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "create_habit"
+                          }
+                        }
+                      },
+                      "then": {
+                        "required": [
+                          "title",
+                          "min_behavior",
+                          "recurrence",
+                          "anchor"
+                        ]
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "create_task"
+                          }
+                        }
+                      },
+                      "then": {
+                        "required": [
+                          "title",
+                          "outcome"
+                        ]
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "report_habit"
+                          }
+                        }
+                      },
+                      "then": {
+                        "required": [
+                          "business_date",
+                          "status"
+                        ]
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "report_event"
+                          }
+                        }
+                      },
+                      "then": {
+                        "required": [
+                          "event_key"
+                        ]
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "link_diary"
+                          }
+                        }
+                      },
+                      "then": {
+                        "required": [
+                          "path",
+                          "label"
+                        ]
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "remember_fact"
+                          }
+                        }
+                      },
+                      "then": {
+                        "required": [
+                          "fact"
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "required": [
+              "action_identity",
+              "actions"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "clarification": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "仅当缺少完成用户当前请求必需的信息时提一个必要问题。普通问答、讨论做法、查询状态时应为null；不能用它问是否要做下一步或是否需要创建。已有答案写discussion。"
+        },
+        "reply_intent": {
+          "enum": [
+            "receipt",
+            "proposal",
+            "discussion",
+            "clarification"
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "discussion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 12000,
+          "description": "直接回答用户当前的问题，或如实报告已执行的文件操作。不能以是否需要帮忙/创建的反问替代已有答案。"
+        }
+      },
+      "required": [
+        "action_groups",
+        "clarification",
+        "reply_intent"
+      ],
+      "additionalProperties": false
+    }
+  }
+]

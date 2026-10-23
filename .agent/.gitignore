@@ -1,0 +1,11 @@
+# Private context and runtime state stay local by default.
+/context/*
+/state/
+/data/*
+!/data/README.md
+/runtime/
+*.log
+*.sqlite-wal
+*.sqlite-shm
+.env
+.env.*

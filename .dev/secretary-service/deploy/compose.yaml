@@ -1,0 +1,131 @@
+services:
+  core:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        NODE_IMAGE: "${NODE_IMAGE:-node:24-bookworm-slim}"
+    image: private-secretary:local
+    restart: unless-stopped
+    read_only: true
+    user: "1000:1000"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    env_file: ["${SECRETARY_SECRETS_FILE:?Set the absolute secret file outside the vault}"]
+    environment:
+      NODE_ENV: production
+      SECRETARY_HOST: 0.0.0.0
+      SECRETARY_VAULT_ROOT: /vault
+      SECRETARY_PUBLIC_ORIGIN: https://${SECRETARY_DOMAIN:?Set domain}
+      SECRETARY_TRUSTED_PROXY_IP: 10.83.0.4
+      SECRETARY_ASTRBOT_URL: http://astrbot:3181
+    volumes:
+      - type: bind
+        source: ${SECRETARY_VAULT_HOST:?Set absolute vault host path}
+        target: /vault
+        bind: {create_host_path: false}
+    networks:
+      private: {ipv4_address: 10.83.0.2}
+      egress: {}
+    mem_limit: 512m
+    cpus: 1
+    stop_grace_period: 45s
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3180/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging: {driver: json-file, options: {max-size: 10m, max-file: "7"}}
+
+  astrbot:
+    image: ${ASTRBOT_IMAGE:-soulter/astrbot:v4.29.1}
+    restart: unless-stopped
+    read_only: true
+    user: "0:0"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: ["/tmp:size=128m,mode=1777"]
+    env_file: ["${SECRETARY_SECRETS_FILE:?Set the absolute secret file outside the vault}"]
+    environment:
+      TZ: Asia/Shanghai
+      SECRETARY_CORE_URL: http://core:3180
+      SECRETARY_BRIDGE_TOKEN: ${SECRETARY_BRIDGE_TOKEN:?Set bridge token in secret.env}
+      SECRETARY_QQ_BOT_ID: ${SECRETARY_QQ_BOT_ID:?Set NapCat bot QQ}
+      QQ_BOT_ID: ${SECRETARY_QQ_BOT_ID:?Set NapCat bot QQ}
+      SECRETARY_RECIPIENT: ${SECRETARY_RECIPIENT:?Set sole owner QQ}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-flash}
+      NAPCAT_WS_TOKEN: ${NAPCAT_WS_TOKEN:?Set NapCat token in secret.env}
+    command: [sh, -c, "python /AstrBot/secretary-bootstrap.py && python main.py"]
+    volumes:
+      - astrbot_data:/AstrBot/data
+      - ../integrations/astrbot/astrbot_plugin_secretary:/AstrBot/data/plugins/astrbot_plugin_secretary:ro
+      - ./astrbot-bootstrap.py:/AstrBot/secretary-bootstrap.py:ro
+    networks:
+      private: {ipv4_address: 10.83.0.3}
+      egress: {}
+    depends_on: [core]
+    mem_limit: 768m
+    cpus: 1
+    logging: {driver: json-file, options: {max-size: 10m, max-file: "7"}}
+
+  napcat:
+    image: ${NAPCAT_IMAGE:-mlikiowa/napcat-docker:latest}
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    environment:
+      MODE: reverse_ws
+      ONEBOT_URL: ws://astrbot:6199/ws
+      NAPCAT_WS_TOKEN: ${NAPCAT_WS_TOKEN:?Set NapCat token in secret.env}
+      SECRETARY_QQ_BOT_ID: ${SECRETARY_QQ_BOT_ID:?Set NapCat bot QQ}
+      WEBUI_TOKEN: ${NAPCAT_WEBUI_TOKEN:?Set NapCat WebUI token in secret.env}
+      TZ: Asia/Shanghai
+    entrypoint: ["/bin/bash", "/app/secretary-napcat-entrypoint.sh"]
+    volumes:
+      - napcat_qq:/app/.config/QQ
+      - napcat_config:/app/napcat/config
+      - napcat_plugins:/app/napcat/plugins
+      - ./napcat-entrypoint.sh:/app/secretary-napcat-entrypoint.sh:ro
+    ports:
+      - "127.0.0.1:6099:6099"
+    networks:
+      private: {ipv4_address: 10.83.0.5}
+      egress: {}
+    depends_on: [astrbot]
+    mem_limit: 768m
+    cpus: 1
+    logging: {driver: json-file, options: {max-size: 10m, max-file: "7"}}
+
+  caddy:
+    image: ${CADDY_IMAGE:-caddy:2-alpine}
+    restart: unless-stopped
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      SECRETARY_DOMAIN: ${SECRETARY_DOMAIN}
+      SECRETARY_CORE_UPSTREAM: 10.83.0.2:3180
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      private: {ipv4_address: 10.83.0.4}
+      egress: {}
+    depends_on: [core]
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: [no-new-privileges:true]
+    logging: {driver: json-file, options: {max-size: 10m, max-file: "7"}}
+
+networks:
+  private:
+    internal: true
+    ipam: {config: [{subnet: 10.83.0.0/24}]}
+  egress: {}
+volumes:
+  astrbot_data: {}
+  napcat_qq: {}
+  napcat_config: {}
+  napcat_plugins: {}
+  caddy_data: {}
+  caddy_config: {}

@@ -1,0 +1,13 @@
+{
+  "cssTheme": "Blue Topaz",
+  "theme": "system",
+  "interfaceFontFamily": "Times New Roman,FZQingKeBenYueSongS-R-GB,LXGW WenKai GB Screen",
+  "textFontFamily": "Times New Roman,FZQingKeBenYueSongS-R-GB,LXGW WenKai GB Screen",
+  "baseFontSize": 20,
+  "showViewHeader": true,
+  "enabledCssSnippets": [
+    "hide-embed-title",
+    "workspace-navigation",
+    "journal-home"
+  ]
+}

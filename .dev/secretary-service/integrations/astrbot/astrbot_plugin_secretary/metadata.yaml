@@ -1,0 +1,9 @@
+name: astrbot_plugin_secretary
+display_name: 私人秘书
+desc: 日记工作区、任务与习惯、可靠调度的受限 Core 桥接
+version: v1.0.0
+author: morewhyhan
+repo: https://github.com/morewhyhan/obsidian-journal
+astrbot_version: '>=4.29.1,<4.30'
+support_platforms:
+  - aiocqhttp

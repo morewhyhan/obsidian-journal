@@ -1,0 +1,10 @@
+node_modules
+.runtime
+.git
+.env
+test-results
+playwright-report
+coverage
+dist
+*.sqlite*
+*.log

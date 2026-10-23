@@ -1,0 +1,5 @@
+{
+  "baseVersion": "1.0.3",
+  "change": "Allow empty diaryDir to scan dated notes across year folders.",
+  "recheckAfterUpdate": true
+}

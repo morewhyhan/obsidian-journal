@@ -1,0 +1,14 @@
+{$SECRETARY_DOMAIN} {
+  encode zstd gzip
+  header {
+    X-Content-Type-Options nosniff
+    Referrer-Policy same-origin
+    X-Frame-Options DENY
+    Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+  }
+  @private path /internal/* /healthz /readyz
+  respond @private 404
+  reverse_proxy {$SECRETARY_CORE_UPSTREAM} {
+    flush_interval -1
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "theme": "dark",
+  "canvasSize": 8000,
+  "background": "transparent",
+  "fontSize": 16,
+  "headLevel": 2,
+  "layout": "mindmap",
+  "layoutDirect": "mindmap",
+  "optimizeRootNode": false,
+  "videoArray": [
+    "avi",
+    "mp4",
+    "avi"
+  ],
+  "strokeSame": false,
+  "dblClickToggle": true,
+  "altJump": true,
+  "mobileDrag": false,
+  "imgWhiteBg": true,
+  "splitDirection": "horizontal",
+  "followFileChange": true,
+  "supportList": false,
+  "menuAddDel": false,
+  "token": {},
+  "trialDate": "",
+  "trialDateToken": "",
+  "xOffset": 0,
+  "yOffset": 0,
+  "scaleStepSize": 3,
+  "defaultScale": 100
+}

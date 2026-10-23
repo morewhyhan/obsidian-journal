@@ -1,0 +1,160 @@
+{
+  "schema_version": 1,
+  "timezone": "Asia/Shanghai",
+  "locale": "zh-CN",
+  "storage": {
+    "document_root": ".",
+    "runtime_store": "sqlite",
+    "database": ".agent/data/state.sqlite",
+    "registry": ".agent/state/registry.json",
+    "day_records": ".agent/state/days",
+    "write_owner": "secretary-core"
+  },
+  "agent": {
+    "provider": "astrbot",
+    "integration": "astrbot_plugin",
+    "session_storage": "memory",
+    "prompts": [
+      "prompts/system.md",
+      "prompts/persona.md",
+      "prompts/workflows.md"
+    ],
+    "allowed_tools": [
+      "get_context",
+      "secretary",
+      "submit_proposal",
+      "workspace"
+    ],
+    "auto_discovery": false,
+    "model_transport": "core_internal_proxy",
+    "interpret_timeout_seconds": 120,
+    "compose_timeout_seconds": 10,
+    "max_tool_calls": 16,
+    "max_structure_repairs": 0
+  },
+  "security": {
+    "agent_execution": "isolated_workspace_tools",
+    "allow_shell": false,
+    "workspace_root_env": "SECRETARY_VAULT_ROOT",
+    "secrets_file_env": "SECRETARY_SECRETS_FILE",
+    "network_policy": "internal_core_only",
+    "authentication": "single_user_scrypt_cookie"
+  },
+  "channel": {
+    "primary": "qq",
+    "adapter": "napcat_astrbot_reverse_ws",
+    "enabled": false,
+    "bridge_url_env": "SECRETARY_ASTRBOT_URL",
+    "bridge_token_env": "SECRETARY_BRIDGE_TOKEN",
+    "bot_id_env": "SECRETARY_QQ_BOT_ID",
+    "recipient_env": "SECRETARY_RECIPIENT",
+    "private_only": true,
+    "max_input_bytes": 16384,
+    "send_timeout_seconds": 15
+  },
+  "sync": {
+    "journal_transport": "web_api",
+    "server_is_source_of_truth": true,
+    "send_full_journal": false,
+    "git": {
+      "mode": "server_worker",
+      "enabled": false,
+      "remote_env": "SECRETARY_GIT_REMOTE",
+      "branch": "main",
+      "debounce_seconds": 30,
+      "push_retry_cap": 3,
+      "conflict_policy": "stop_and_report",
+      "database_in_git": false,
+      "repository_visibility": "private",
+      "backup_long_lived_state": true,
+      "include_attachments": true,
+      "continuous_edit_commit_max_seconds": 300,
+      "retry_delay_minutes": [1, 5, 15],
+      "degraded_retry_minutes": 60,
+      "transport": "ssh_deploy_key"
+    }
+  },
+  "notifications": {
+    "quiet_hours": {
+      "start": "23:00",
+      "end": "08:00",
+      "source": "engineering_default"
+    },
+    "daily_proactive_message_cap": 4,
+    "minimum_gap_minutes": 60,
+    "per_plan_reminder_cap": 2,
+    "follow_up_after_minutes": 90,
+    "habit_follow_up_requires_recent_engagement": true,
+    "recent_engagement_hours": 24,
+    "delivery_retry_cap": 2,
+    "catch_up_after_restart": false,
+    "respect_quiet_hours_for_deadlines": true,
+    "delivery_retry_delays_seconds": [30, 120]
+  },
+  "habits": {
+    "auto_activate_from_diary": false,
+    "collect_quantity": "only_if_provided",
+    "optional_target_is_required": false,
+    "carry_over_debt": false
+  },
+  "tasks": {
+    "default_verification": "self_report",
+    "auto_reschedule_flexible_work_blocks": true,
+    "auto_change_due_at": false,
+    "change_acceptance_requires_user": true
+  },
+  "interaction": {
+    "proactive_questions": false,
+    "clarifications_per_turn": 1,
+    "chase_unanswered_clarification": false,
+    "receipt_required": false,
+    "routine_message_char_target": 90,
+    "scheduled_summary_enabled": false
+  },
+  "journal": {
+    "enabled": true,
+    "root": "01. Daily",
+    "create_notes": false,
+    "allowed_sections": ["习惯", "任务"],
+    "read_narrative": "explicit_request_only",
+    "write_operations": ["set_mapped_checkbox", "append_approved_item"],
+    "scan_history": false,
+    "allow_explicit_user_creation": true,
+    "auto_create_from_qq": false
+  },
+  "scheduler": {
+    "tick_seconds": 30,
+    "lookahead_hours": 24,
+    "single_instance": true,
+    "delivery_lease_seconds": 60
+  },
+  "retention": {
+    "cleanup_local_time": "04:30",
+    "outbox_body_days": 7,
+    "outbox_receipt_days": 30,
+    "inbox_terminal_days": 30,
+    "events_completed_days": 90,
+    "unknown_abandon_after_window_days": 7,
+    "registry_ended_plan_days": 30,
+    "trash_days": 7,
+    "log_days": 7,
+    "delete_long_lived_facts": false,
+    "vacuum_check_weekday": 7,
+    "vacuum_min_database_mib": 16,
+    "vacuum_min_free_fraction": 0.25
+  },
+  "web": {
+    "autosave_idle_ms": 1000,
+    "max_document_bytes": 2097152,
+    "max_attachment_bytes": 20971520,
+    "browser_draft": "indexeddb",
+    "run_plugin_scripts": false
+  },
+  "calendar": {
+    "quarter": "natural",
+    "week_numbering": "iso",
+    "split_week_at_natural_year": true,
+    "daily_folder": "natural_year_quarter_month",
+    "weekly_folder": "max_week_monday_and_natural_year_start"
+  }
+}

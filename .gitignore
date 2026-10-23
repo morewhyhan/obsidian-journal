@@ -1,0 +1,32 @@
+# Local archives and scratch files
+/.local/
+/.tmp/
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log
+*.tmp
+*.crdownload
+
+# Obsidian runtime and local state
+/.trash/
+/.obsidian/workspace*.json
+/.obsidian/cache/
+/.obsidian/.cache/
+/.obsidian/graph.json
+/.obsidian/bookmarks.json
+/.obsidian/sync.json
+/.obsidian/publish.json
+/.obsidian/plugins/recent-files-obsidian/data.json
+/.obsidian/plugins/obsidian-super-mindmap/record.json
+/.obsidian/plugins/**/data(1).json
+/.obsidian/plugins/**/secret*.json
+/.obsidian/plugins/**/credentials*.json
+/.obsidian/plugins/**/cache/
+
+# Personal records created after starting the vault
+/[0-9][0-9][0-9][0-9]年/
+/01. Daily/[0-9][0-9][0-9][0-9]年/
+/Attachment/**
+!/Attachment/.gitkeep
+
