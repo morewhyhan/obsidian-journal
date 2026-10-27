@@ -125,6 +125,8 @@ async function setup(time = '2026-10-26T01:50:00Z') {
       return value;
     },
     async tick() { await app.core.assistant.tick(); await app.scheduler.tick(); },
+    // Production ticks once per second; wording is drafted in an earlier pass.
+    wait: ms => pause(ms),
     async restart() { await app.app.close(); app = await open(); },
     async close() {
       if (closed) return;
@@ -330,7 +332,9 @@ await scenario('E14', '提醒给出可执行下一步，无羞辱或回复负担
   const t=await h.turn('看看我接下来要做什么，直接告诉我一步能开始的动作，不要问我的心理原因。');
   check(/案例|提纲|打开/.test(t.reply), '说明实际下一步而非抽象加油');
   check(!/为什么.*不|你.*逃避|自制力差|必须回复/.test(t.reply) && t.reply.length<=300, '简短且没有心理追问或强制回复');
-  h.setTime('2026-10-26T02:00:00Z'); await h.tick();
+  // The scheduler loop runs every second: the first pass asks the model for
+  // wording, the next pass dispatches it. Advance the loop, not the data.
+  h.setTime('2026-10-26T02:00:00Z'); await h.tick(); await h.wait(2500); await h.tick();
   const reminders=h.sent.filter(m=>m.refs.some(r=>r.kind==='task'));
   check(reminders.length===1 && /案例/.test(reminders[0].body), '调度提醒沿用真实下一步');
   check(reminders.every(m=>m.body.length<=250 && !/自制力|不自律|罚|欠账/.test(m.body)), '实际提醒符合低压力边界');
@@ -380,7 +384,7 @@ await scenario('E18', '不可兼容的延误保留固定事项和硬截止', asy
 await scenario('E19', '小时反馈写入授权、更正保留历史', async h => {
   await h.seed({type:'create_automation',kind:'hourly_checkin',title:'小时回顾',to_diary:true,
     schedule:{weekdays:[1,2,3,4,5],starts_on:'2026-10-26',local_start:'09:00',local_end:'18:00',minute:55}});
-  await h.tick(); h.advance(5*60000+1); await h.tick();
+  await h.tick(); h.advance(5*60000+1); await h.tick(); await h.wait(2500); await h.tick();
   const m=h.sent.at(-1); check(!!m,'到点产生小时回顾'); if(!m)return;
   const t=await h.turn('这一小时在读英语，请记为“英语阅读”，这次不要写日记。',{reply_to:m.externalId});
   check(accepted(t) && h.day().automation_occurrences.some(o=>o.report?.text==='英语阅读' && o.report.to_diary===false), '指定记录逐字保存，单次不写日记覆盖已启用订阅');
