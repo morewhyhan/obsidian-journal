@@ -1,6 +1,8 @@
 # Local archives and scratch files
 /.local/
 /.tmp/
+# Session scratch scripts
+/.dev/work/
 .DS_Store
 Thumbs.db
 desktop.ini

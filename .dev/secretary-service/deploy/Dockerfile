@@ -11,6 +11,10 @@ COPY apps/ apps/
 COPY packages/ packages/
 COPY scripts/ scripts/
 COPY resources/ resources/
+# The release manifest hashes every shipped module, so the build stage needs
+# the integration and deployment trees even though neither runs in the image.
+COPY integrations/ integrations/
+COPY deploy/ deploy/
 RUN npm run build
 
 FROM ${NODE_IMAGE} AS runtime
