@@ -1,9 +1,9 @@
 {
   "format": 1,
   "service_version": "0.1.0",
-  "source_commit": "52733fd18cc9393b8836ecd8b6f5f6ea3dd1be48",
+  "source_commit": "7151ac7fb8df8a6f3291e2e0be9f552ee016208f",
   "source_commit_is_base_only": true,
-  "source_hash": "sha256:12d48a78bbc5f8709b568bcce902964da326d05b0a1dda81f138143259f588b0",
+  "source_hash": "sha256:c33b6469cb132c5b75e84382e3a3b38b9941e4b13ddd766c7a9ebaacf985b275",
   "lock_hash": "sha256:a1340b831039fad6ccb59eea32648172911a3773627c3f9113f507112401a651",
   "tools_hash": "sha256:25f0f499a36e456a3129cbfe5fc70ae7d748570350f69bb4a0f36b2408d5eec5",
   "plugin_version": "1.0.0",
@@ -75,7 +75,11 @@
     },
     {
       "path": "apps/core/core.ts",
-      "hash": "sha256:01bb46ee0a2cb36603916682f8ede25c73e8b5c0e4f8ad5fd660c78ecfefee0f"
+      "hash": "sha256:55e29b2b2b6e70c5f12f15b3c9934ac1373c185cb638565c81a8acbeb2c6c5ee"
+    },
+    {
+      "path": "apps/core/deadline.ts",
+      "hash": "sha256:f781453874477ff5fa73cc2d809a5db2ab0d08b097142c8c648d5c9b3d67306f"
     },
     {
       "path": "apps/core/document-operations.ts",
@@ -135,7 +139,7 @@
     },
     {
       "path": "apps/core/scheduler.ts",
-      "hash": "sha256:d74fa2c8abd0e11123ab23b9dfd49ffbfb172c101f2e1736cd02fb25c6fb794e"
+      "hash": "sha256:96b27f59a6f02b838dc9b8074f024555a93787a23831b14fa55dffb3843d1a9f"
     },
     {
       "path": "apps/core/snapshot-backup.ts",

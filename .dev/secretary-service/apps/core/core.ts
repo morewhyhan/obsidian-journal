@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { DateTime } from "luxon";
+import { Lease, withDeadline } from "./deadline.js";
 import {
   AppError,
   type Action,
@@ -114,11 +115,9 @@ export class Core {
   subscribers = new Set<(event: { type: string; data: unknown }) => void>();
   agent?: AgentAdapter;
   summaryError: string | null = null;
-  private processing = false;
-  private processingSince = 0;
+  /** A turn lease, not a boolean: a hung turn expires instead of starving the queue. */
+  readonly turnLease = new Lease("turn", 150_000);
   private foregroundStreak=0;
-  /** A single-flight guard without a bound starves every later message. */
-  private readonly guardLimitMs = 150_000;
   operationKey(input:Input,actions:Action[],identity:string) {
     const literal=literalReportText(input.text);
     const normalized=literal !== null && actions.length === 1 && actions[0].type === "report_automation"
@@ -129,7 +128,7 @@ export class Core {
   private idle: Promise<void> = Promise.resolve();
   private releaseIdle?: () => void;
   get working() {
-    return this.processing;
+    return this.turnLease.held;
   }
   constructor(public store: Store) {
     this.documents = new DocumentOperations(store);
@@ -1842,35 +1841,27 @@ export class Core {
     return context;
   }
   async processPending() {
-    if (this.processing && !this.stopping) {
-      // Release a guard whose turn left no evidence behind, and fail a turn
-      // that has been "processing" far beyond any model budget. Otherwise one
-      // stuck await would quietly stop every future message.
-      const elapsed = this.processingSince ? Date.now() - this.processingSince : 0;
-      if (elapsed > this.guardLimitMs) {
-        const live = this.store.db
-          .prepare("SELECT id FROM inbox WHERE status='processing'")
-          .all() as { id: string }[];
-        if (live.length)
-          for (const row of live)
-            this.store.db
-              .prepare(
-                "UPDATE inbox SET status='failed',processed_at=?,error_code='TURN_TIMEOUT' WHERE id=?",
-              )
-              .run(this.store.now(), row.id);
-        this.processing = false;
-        this.processingSince = 0;
-        this.emit("runtime_degraded", {
-          code: "PROCESSING_GUARD_RECOVERED",
-          elapsed_ms: elapsed,
-          abandoned: live.length,
-        });
-      }
-      if (this.processing) return;
-    }
     if (!this.agent || this.stopping) return;
-    this.processing = true;
-    this.processingSince = Date.now();
+    // An expired lease is taken over instead of waiting for a dead holder. Its
+    // abandoned row is closed as failed so nothing stays "processing" forever.
+    if (this.turnLease.expired) {
+      const live = this.store.db
+        .prepare("SELECT id FROM inbox WHERE status='processing'")
+        .all() as { id: string }[];
+      for (const row of live)
+        this.store.db
+          .prepare(
+            "UPDATE inbox SET status='failed',processed_at=?,error_code='TURN_TIMEOUT' WHERE id=?",
+          )
+          .run(this.store.now(), row.id);
+      this.emit("runtime_degraded", {
+        code: "PROCESSING_GUARD_RECOVERED",
+        elapsed_ms: this.turnLease.ageMs(),
+        abandoned: live.length,
+      });
+    }
+    const lease = this.turnLease.tryAcquire();
+    if (lease === null) return;
     this.idle = new Promise((resolve) => {
       this.releaseIdle = resolve;
     });
@@ -1880,7 +1871,9 @@ export class Core {
         if(this.foregroundStreak>=3) {
           this.foregroundStreak=0;
           this.assistant.startPlanning(true);
-          await this.assistant.drain();
+          // Planning may be slow, but it can never hold the message queue open.
+          await withDeadline("planning-drain", 120_000, () => this.assistant.drain())
+            .catch(() => { this.foregroundStreak = 0; });
         }
         const row = this.store.db
           .prepare(
@@ -2369,8 +2362,7 @@ export class Core {
         }
       }
     } finally {
-      this.processing = false;
-      this.processingSince = 0;
+      this.turnLease.release(lease);
       this.releaseIdle?.();
     }
   }

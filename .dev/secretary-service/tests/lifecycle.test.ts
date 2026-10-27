@@ -5,6 +5,7 @@ import { harness, temporary, removeTemporary, taskAction } from "./helpers.js";
 import { Store } from "../apps/core/store.js";
 import { loadConfig } from "../apps/core/config.js";
 import { Lifecycle } from "../apps/core/lifecycle.js";
+import { Lease } from "../apps/core/deadline.js";
 import { effectivePolicy } from "../apps/core/policy.js";
 import { createApp } from "../apps/core/app.js";
 import { passwordHash } from "../apps/core/auth.js";
@@ -111,13 +112,18 @@ it("a processing guard stuck past its bound is recovered instead of starving eve
     }),
     close() {},
   } as any;
-  const input = { ...h.input("hi"), channel: "qq" as const };
-  await h.core.receive(input);
-  h.store.db.prepare("UPDATE inbox SET status='processing' WHERE id=?").run(input.id);
-  (h.core as any).processing = true;
-  (h.core as any).processingSince = Date.now() - 10 * 60 * 1000;
+  const input = h.input("hi");
+  h.store.db
+    .prepare(
+      "INSERT INTO inbox(id,channel,actor_ref,external_id,body,metadata_json,status,attempts,received_at,occurred_at) VALUES(?,?,?,?,?,?,'processing',1,?,?)",
+    )
+    .run(input.id, "qq", "user", "m1", "hi", "{}", h.store.now(), h.store.now());
+  // A holder that never returns: its lease must expire and be taken over.
+  (h.core as any).turnLease = new Lease("turn", 1);
+  (h.core as any).turnLease.tryAcquire();
+  await new Promise((resolve) => setTimeout(resolve, 30));
   await h.core.processPending();
-  expect((h.core as any).processing).toBe(false);
+  expect((h.core as any).turnLease.held).toBe(false);
   expect(
     h.store.db.prepare("SELECT status,error_code FROM inbox WHERE id=?").get(input.id),
   ).toMatchObject({ status: "failed", error_code: "TURN_TIMEOUT" });

@@ -2,6 +2,7 @@ import { DateTime } from "luxon";
 import type { Registry } from "../../packages/contracts/types.js";
 import { localDate } from "../../packages/calendar/index.js";
 import { hash, id, canonicalJson } from "./files.js";
+import { Lease } from "./deadline.js";
 import type { Core } from "./core.js";
 import { effectivePolicy } from "./policy.js";
 import { followupKey } from "../../packages/domain/followups.js";
@@ -49,7 +50,7 @@ export class Scheduler {
   private language = new Map<string, string>();
   private languageRetryAfter = new Map<string, number>();
   busy = false;
-  private busySince = 0;
+  readonly tickLease = new Lease("tick", 120_000);
   lastTick: string | null = null;
   lastError: string | null = null;
   private idle: Promise<void> = Promise.resolve();
@@ -544,15 +545,12 @@ export class Scheduler {
     this.stopped = true;
   }
   async tick(receiptsOnly = false) {
-    if (this.busy) {
-      // A tick that never returned would silently stop all dispatch.
-      if (Date.now() - this.busySince < 120_000) return;
-      this.busy = false;
-      this.lastError = "TICK_GUARD_RECOVERED";
-    }
     if (this.stopped) return;
+    // A tick lease expires on its own: a hung dispatch cannot block the loop.
+    if (this.tickLease.expired) this.lastError = "TICK_GUARD_RECOVERED";
+    const lease = this.tickLease.tryAcquire();
+    if (lease === null) return;
     this.busy = true;
-    this.busySince = Date.now();
     this.idle = new Promise((resolve) => {
       this.releaseIdle = resolve;
     });
@@ -925,8 +923,8 @@ export class Scheduler {
     } catch (error) {
       this.lastError = error instanceof Error ? error.name : "SCHEDULER_ERROR";
     } finally {
+      this.tickLease.release(lease);
       this.busy = false;
-      this.busySince = 0;
       this.releaseIdle?.();
     }
   }
