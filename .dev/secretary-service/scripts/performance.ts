@@ -5,8 +5,9 @@ import { performance } from "node:perf_hooks";
 import { createApp } from "../apps/core/app.js";
 import { passwordHash } from "../apps/core/auth.js";
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "secretary-performance-"));
-const files = 5000,
-  totalBytes = 100 * 1024 * 1024,
+// Reference load from ARCHITECTURE §4: 10,000 notes, 40 MiB, 2 vCPU.
+const files = Number(process.env.PERF_FILES ?? 5000),
+  totalBytes = Number(process.env.PERF_MB ?? 100) * 1024 * 1024,
   baseSize = Math.floor(totalBytes / files),
   remainder = totalBytes % files;
 let instance: Awaited<ReturnType<typeof createApp>> | undefined;
