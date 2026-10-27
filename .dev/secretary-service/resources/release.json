@@ -1,9 +1,9 @@
 {
   "format": 1,
   "service_version": "0.1.0",
-  "source_commit": "771249bf169a65f1e938e00832d9fdf28fb4efb1",
+  "source_commit": "4fa33d3f147fd5de32b0bf4da91fa4d58f2ef6e0",
   "source_commit_is_base_only": true,
-  "source_hash": "sha256:9511d076147ef054487a7fd527dad0de59a34b3d2b633014211191f53a8ff980",
+  "source_hash": "sha256:699b161408ecf5fa1749a6387a5e148d3f09bcfa6a6453200923cbba749ca52b",
   "lock_hash": "sha256:a1340b831039fad6ccb59eea32648172911a3773627c3f9113f507112401a651",
   "tools_hash": "sha256:25f0f499a36e456a3129cbfe5fc70ae7d748570350f69bb4a0f36b2408d5eec5",
   "plugin_version": "1.0.0",
@@ -63,7 +63,7 @@
     },
     {
       "path": "apps/core/config.ts",
-      "hash": "sha256:765002ba466d9b78ab5ce07ada3d2b08274b56576c418a974a0e5e088095b9ad"
+      "hash": "sha256:b2a87b08e33469a377e1c276f0556dec0d3a4390166c276b4b56bed2b10224c6"
     },
     {
       "path": "apps/core/conversation.ts",

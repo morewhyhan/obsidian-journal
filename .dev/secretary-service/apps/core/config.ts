@@ -179,9 +179,24 @@ export function loadConfig(vault: string) {
     throw new AppError("CONFIG_INVALID", "配置与 v1 运行协议不匹配", 500);
   return cfg;
 }
-function merge(target: any, source: any) {
+/**
+ * Config version 1 named two raw OneBot environment variables that the QQ
+ * bridge no longer reads. They are superseded by the bridge_* keys; accepting
+ * them keeps an already deployed vault readable and keeps rollback to the
+ * older image possible. Anything else unknown still fails loudly.
+ */
+const LEGACY_CONFIG_KEYS: Record<string, string> = {
+  "channel.ws_url_env": "bridge_url_env",
+  "channel.token_env": "bridge_token_env",
+};
+function merge(target: any, source: any, prefix = "") {
   for (const [k, v] of Object.entries(source)) {
-    if(!(k in target))throw new AppError("CONFIG_INVALID","未知配置字段："+k,500);
+    const path = prefix ? prefix + "." + k : k;
+    if(!(k in target)) {
+      const alias = LEGACY_CONFIG_KEYS[path];
+      if (alias && alias in target) continue;
+      throw new AppError("CONFIG_INVALID","未知配置字段："+path,500);
+    }
     if (["__proto__", "constructor", "prototype"].includes(k))
       throw new Error("Unsafe config key");
     if (
@@ -191,7 +206,7 @@ function merge(target: any, source: any) {
       target[k] &&
       typeof target[k] === "object"
     )
-      merge(target[k], v);
+      merge(target[k], v, path);
     else target[k] = v;
   }
 }

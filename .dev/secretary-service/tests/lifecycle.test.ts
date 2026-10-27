@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { harness, temporary, removeTemporary, taskAction } from "./helpers.js";
 import { Store } from "../apps/core/store.js";
@@ -101,6 +103,20 @@ it("a stopped store refuses writes and vault access instead of serving stale sta
   expect(() => store.files.read("01. Daily/2026-10-27.md")).toThrow(
     /写锁已失效/,
   );
+  removeTemporary(root);
+});
+
+it("a deployed config with the two legacy channel keys still loads, and other unknowns fail with their path", () => {
+  const root = temporary();
+  fs.mkdirSync(path.join(root, ".agent"), { recursive: true });
+  const file = path.join(root, ".agent/config.json");
+  fs.writeFileSync(
+    file,
+    JSON.stringify({ channel: { ws_url_env: "QQ_WS_URL", token_env: "QQ_ACCESS_TOKEN" } }),
+  );
+  expect(() => loadConfig(root)).not.toThrow();
+  fs.writeFileSync(file, JSON.stringify({ channel: { unexpected_key: 1 } }));
+  expect(() => loadConfig(root)).toThrow(/channel\.unexpected_key/);
   removeTemporary(root);
 });
 
