@@ -244,7 +244,15 @@ export class Store {
       this.db
         .prepare("UPDATE inbox SET status='pending',metadata_json=json_set(metadata_json,'$.interrupted',1) WHERE status='processing'")
         .run();
-      this.updateRuntimeMeta(meta=>({...meta,generation:this.generation}));
+      // A model job belongs to the process that started it. One that outlived
+      // its process blocks the startup self-test forever: the job looks active,
+      // so nothing runs, so nothing ever finishes it. Drop it with the restart.
+      this.updateRuntimeMeta(meta=>{
+        const job=meta.model_job as {generation?:string;deadline_at?:string}|null|undefined;
+        const stale=!!job && (job.generation!==this.generation ||
+          !job.deadline_at || Date.parse(job.deadline_at)<=Date.parse(this.now()));
+        return {...meta,generation:this.generation,...(stale?{model_job:null}:{})};
+      });
       this.enterServing();
     } catch (error) {
       if (this.db?.open) this.db.close();

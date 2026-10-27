@@ -79,6 +79,25 @@ it("restart enters degraded from the persisted recovery guard instead of claimin
   expect((await h.run(taskAction)).updated_ids.length).toBe(1);
 });
 
+it("a model job left by a dead process is dropped on restart instead of blocking every turn", async () => {
+  const h = harness("2026-10-27T04:30:00Z");
+  cleanups.push(() => h.close());
+  h.store.updateRuntimeMeta((meta) => ({
+    ...meta,
+    model_job: {
+      id: "modeljob_dead",
+      input_id: "compose-x",
+      kind: "compose",
+      generation: "run_dead",
+      deadline_at: "2026-10-27T04:20:00.000Z",
+      requests: 1,
+    },
+  }));
+  await h.restart();
+  expect(h.store.runtimeMeta().model_job ?? null).toBeNull();
+  expect(h.store.lifecycle).toBe("ready");
+});
+
 it("maintenance round trips keep the degraded reasons that caused them", async () => {
   const h = harness("2026-10-27T04:00:00Z");
   cleanups.push(() => h.close());
