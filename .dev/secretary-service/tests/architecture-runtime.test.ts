@@ -173,6 +173,16 @@ it("D25 a changed prompt invalidates old write authority and new model jobs with
   await expect(workspaceCall(h.core,{input_id:input.id,call_id:"stale",operation:"write",path:"blocked.md",content:"must not write"})).rejects.toThrow("兼容组合");
   expect(fs.existsSync(path.join(h.root,"blocked.md"))).toBe(false);
 });
+it("D25c a prompt that still routes business changes through submit_proposal is refused, and the wording view carries no tool protocol",()=>{
+  const h=setup();
+  atomicWrite(h.store.files.resolve(".agent/prompts/system.md","internal"),"业务变更通过 submit_proposal 交给 Core。");
+  expect(()=>loadRuntimeCombination(h.store,{LLM_MODEL:"deepseek-flash"})).toThrow("submit_proposal");
+  atomicWrite(h.store.files.resolve(".agent/prompts/system.md","internal"),"业务变更用 secretary.apply_changes 直接办理。");
+  const c=loadRuntimeCombination(h.store,{LLM_MODEL:"deepseek-flash"});
+  expect(c.communication).not.toContain("input_mode=");
+  expect(c.instructions).toContain("input_mode=");
+  expect(c.communication).toContain("只负责表达");
+});
 it("D25b an oversized prompt set fails at startup instead of every model turn",()=>{
   const h=setup();
   atomicWrite(h.store.files.resolve(".agent/prompts/workflows.md","internal"),"必须遵守的长期规则。".repeat(3000));

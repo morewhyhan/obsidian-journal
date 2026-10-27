@@ -649,16 +649,10 @@ export class Scheduler {
               ? this.literal(candidate) ?? this.language.get(this.languageKey(candidate, kind === "follow_up"))
               : null;
             if (this.core.agent?.executionMode === "tools-v2" && !nativeBody) continue;
-            const body = nativeBody ?? (
-                kind === "follow_up"
-                  ? candidate.target.kind === "habit"
-                    ? "这次还有空的话，做这一小步就好：" +
-                      candidate.text +
-                      "；今天跳过也可以。"
-                    : "这项还没有完成确认。下一步：" +
-                      candidate.text +
-                      "；已经做完直接告诉我即可。"
-                  : this.body(candidate)),
+            // Fallback wording stays factual: it repeats what the user asked for
+            // or the saved next step, never a friendly template that pretends to
+            // be the assistant's own voice.
+            const body = nativeBody ?? candidate.noticeBody ?? candidate.text,
               versions = JSON.stringify({
                 [candidate.id]: candidate.version,
                 [candidate.target.id]: candidate.targetVersion,

@@ -37,6 +37,8 @@ function valid(result: any): result is AgentResult {
 }
 export class AstrBotClient implements AgentAdapter {
   readonly executionMode = "tools-v2" as const;
+  /** Persona-and-facts view without the tool protocol, for wording calls. */
+  communication = "";
   private shutdown = new AbortController();
   constructor(
     private url: string,
@@ -65,6 +67,7 @@ export class AstrBotClient implements AgentAdapter {
           input,
           context,
           instructions: this.instructions,
+          communication: this.communication || this.instructions,
           limits: { max_tools: this.limits.maxTools, timeout_ms: timeout },
           execution_mode: input.id === "model-self-test" || input.channel === "coordinator" && !(context as any)?.background_grant ? "legacy" : this.executionMode,
         }),
@@ -148,7 +151,7 @@ export class AstrBotClient implements AgentAdapter {
       },
       body: JSON.stringify({
         facts,
-        instructions: this.instructions,
+        instructions: this.communication || this.instructions,
         limits: { timeout_ms: this.limits.composeTimeoutMs },
       }),
       signal: AbortSignal.any([

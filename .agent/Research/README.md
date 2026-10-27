@@ -52,6 +52,7 @@
 单用户QQ MVP使用NapCat、AstrBot与DeepSeek Flash。需要不同的机器人QQ/使用者QQ、模型配置、独立服务器数据目录和扫码登录。密钥不进模板，Git备份默认关闭。
 
 - [PRD.md](PRD.md)：交付价值、功能和使用流程。
+- [RELEASE-PLAN.md](RELEASE-PLAN.md)：2026-10-27 全局审计、剩余根因、八个实施工作包与严格发布门禁，供下一轮执行使用。
 - [ARCHITECTURE.md](ARCHITECTURE.md)：工程实施基线。按目标与边界、静态结构、运行机制、质量合同、工程生命周期、实施验收六章组织；设计目标与实测能力分开。
 - [Architecture-Atlas.md](Architecture-Atlas.md)：先看图理解。总览加业务、产品、应用、技术、数据、部署、安全、运维八个SVG视角。
 - [DDD.md](DDD.md)：当前实现、事务、权限、故障处理、部署和已取得的验证证据。

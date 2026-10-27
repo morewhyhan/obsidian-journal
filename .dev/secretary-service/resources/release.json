@@ -1,9 +1,9 @@
 {
   "format": 1,
   "service_version": "0.1.0",
-  "source_commit": "cd6d9f7681d6f12e6b8a7a8b805c7be0a67cfa8b",
+  "source_commit": "421bd2066034cbbb50a6cf09240da6165427369a",
   "source_commit_is_base_only": true,
-  "source_hash": "sha256:253cc510a61eac0f49ff11515e9d14b679454bede84f97d2229ef21ebb28baf9",
+  "source_hash": "sha256:ae304cea9f1d87e84d56216c162dceaeec6a425cd927753c05d4e528863082ec",
   "lock_hash": "sha256:a1340b831039fad6ccb59eea32648172911a3773627c3f9113f507112401a651",
   "tools_hash": "sha256:25f0f499a36e456a3129cbfe5fc70ae7d748570350f69bb4a0f36b2408d5eec5",
   "plugin_version": "1.0.0",
@@ -15,7 +15,7 @@
   "files": [
     {
       "path": "apps/core/agent-client.ts",
-      "hash": "sha256:609dfdfb20a753951f36411f283431cf7b2ffe3a1ef80ae4c3206ab9dc54158e"
+      "hash": "sha256:2defbd346ca67b7a7ba518acc7da9c2fcd970ef9e30df3a23301a379f69098c7"
     },
     {
       "path": "apps/core/agent-runtime.ts",
@@ -23,7 +23,7 @@
     },
     {
       "path": "apps/core/app.ts",
-      "hash": "sha256:f55021835aa8ad00ef206f105b01ac1ca9e9e5bf1861fd003531813454e4419e"
+      "hash": "sha256:af654a500dc867a573657b149961c75748c257d035987c16f5694701da4da97b"
     },
     {
       "path": "apps/core/application.ts",
@@ -55,7 +55,7 @@
     },
     {
       "path": "apps/core/compatibility-runtime.ts",
-      "hash": "sha256:8d35f8e3ce23b3bc1efc7e6b70056f8dbf57b19ff885d0ed26ea1f8f73e80e40"
+      "hash": "sha256:b683437d95cacb1b6e751bc66a95bd4065c3105b7b987d8b26dd57ba2d9c4eb8"
     },
     {
       "path": "apps/core/compatibility.ts",
@@ -135,7 +135,7 @@
     },
     {
       "path": "apps/core/scheduler.ts",
-      "hash": "sha256:e832dbbf19aabd7fabd75cad3fb090676f0747cd3abcb92dc6e949561eb1f364"
+      "hash": "sha256:25a05cf82c766c00760d19675dd65c9941e021f077761a4055b01c410148572e"
     },
     {
       "path": "apps/core/snapshot-backup.ts",
@@ -203,7 +203,7 @@
     },
     {
       "path": "integrations/astrbot/astrbot_plugin_secretary/main.py",
-      "hash": "sha256:395313273db67966d637fd0c228f1ad2da009d0ba41ce85391dbce4df6d89504"
+      "hash": "sha256:da07d39c2aef7a0b89081b938c41f160e30ba35813a99bc762035a9b1e14fb47"
     },
     {
       "path": "integrations/astrbot/astrbot_plugin_secretary/metadata.yaml",

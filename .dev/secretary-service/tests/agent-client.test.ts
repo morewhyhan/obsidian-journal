@@ -74,6 +74,22 @@ it("a full model input budget is reported as such and never as an unreachable ag
   expect(error.message).not.toContain("PRIVATE");
   expect(fetch).toHaveBeenCalledTimes(1);
 });
+it("wording calls receive the communication view while execution keeps the protocol", async () => {
+  const bodies: any[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (url: string, opts: any) => {
+    bodies.push(JSON.parse(opts.body));
+    return new Response(JSON.stringify(url.endsWith("/compose")
+      ? { text: "好的" }
+      : { action_groups: [], clarification: null, reply_intent: "discussion", discussion: "好" }));
+  }));
+  const client = new AstrBotClient("http://astrbot", "token", 1000, "EXEC_PROTOCOL");
+  client.communication = "PERSONA_ONLY";
+  await client.interpret(input, {});
+  await client.compose({});
+  expect(bodies[0].instructions).toBe("EXEC_PROTOCOL");
+  expect(bodies[0].communication).toBe("PERSONA_ONLY");
+  expect(bodies[1].instructions).toBe("PERSONA_ONLY");
+});
 it("configured call and compose limits reach the adapter and startup waits for health", async () => {
   const bodies: any[] = [];
   const fetch = vi.fn(async (url: string, opts: any) => {

@@ -21,6 +21,7 @@ export function harness(date = "2026-10-23T12:00:00Z") {
   let now = new Date(date),
     store = new Store(root, loadConfig(root), () => now),
     core = new Core(store);
+
   const input = (text = "用户明确交代"): Input => ({
     id: id("input"),
     channel: "web",

@@ -103,6 +103,8 @@ export async function createApp(options: AppOptions) {
           },
         )
       : undefined);
+  if (configuredAgent instanceof AstrBotClient)
+    configuredAgent.communication = combination.communication;
   core.agent = options.agent;
   const agentStatus = {
     configured: !!configuredAgent,
