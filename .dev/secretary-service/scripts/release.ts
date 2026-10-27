@@ -16,7 +16,10 @@ function visit(relative:string) {
   }
 }
 for(const directory of ["apps","packages","integrations","resources","deploy","scripts"])visit(directory);
-files.sort((a,b)=>a.path.localeCompare(b.path));
+// Code-point order, not locale collation: ICU collation differs between the
+// Windows dev host and the Linux build image for CJK filenames, which would
+// change source_hash for identical bytes.
+files.sort((a,b)=>a.path<b.path?-1:a.path>b.path?1:0);
 const git=spawnSync("git",["rev-parse","HEAD"],{cwd:projectRoot,encoding:"utf8",windowsHide:true});
 const commit=/^[a-f0-9]{40,64}$/.test(git.stdout?.trim()??"")?git.stdout.trim():null;
 const pkg=JSON.parse(fs.readFileSync(path.join(projectRoot,"package.json"),"utf8"));

@@ -1,9 +1,9 @@
 {
   "format": 1,
   "service_version": "0.1.0",
-  "source_commit": "b3ede22549c86541d10cdb64fd3b8bb879644a4e",
+  "source_commit": "e981e66c9cc37832fd55dc40f6a388c461a4c574",
   "source_commit_is_base_only": true,
-  "source_hash": "sha256:4decd6a91d90d3935bd73734cdb1efdcca05b6188b61e93cca4d698fe412a2a4",
+  "source_hash": "sha256:672051a388119d59cb8b3e31ff9c228297b6cad133162b376d4215f7a9c93c94",
   "lock_hash": "sha256:b132b39885871620156b6d4236f548edaa2e633edf3ec0af87f41a1b78d718c8",
   "tools_hash": "sha256:25f0f499a36e456a3129cbfe5fc70ae7d748570350f69bb4a0f36b2408d5eec5",
   "plugin_version": "1.0.0",
@@ -166,20 +166,20 @@
       "hash": "sha256:0bbc7ec3be22788340261ce16616823f2ab090ba7246cadf64be63e07ca8be26"
     },
     {
-      "path": "apps/web/src/api.ts",
-      "hash": "sha256:bb5f3cd6f07ab30452ab5c3f92cd0cc9ad13c76b7d485a0ea2003b897c65ba20"
-    },
-    {
       "path": "apps/web/src/Editor.tsx",
       "hash": "sha256:46606c5f2ec6e02a0e56475bb018ebb0f5f65108fa35a21b234d1efa58b6527f"
     },
     {
-      "path": "apps/web/src/main.tsx",
-      "hash": "sha256:8a895ed6a6a9a6952b6e01ea1ffbca05fdeff0238538ec1e09322aab0f536dba"
-    },
-    {
       "path": "apps/web/src/Preview.tsx",
       "hash": "sha256:f56c11af376e11ac5e74d299a6c01ec5401ff0efcf91d95f5db36739511419ab"
+    },
+    {
+      "path": "apps/web/src/api.ts",
+      "hash": "sha256:bb5f3cd6f07ab30452ab5c3f92cd0cc9ad13c76b7d485a0ea2003b897c65ba20"
+    },
+    {
+      "path": "apps/web/src/main.tsx",
+      "hash": "sha256:8a895ed6a6a9a6952b6e01ea1ffbca05fdeff0238538ec1e09322aab0f536dba"
     },
     {
       "path": "deploy/astrbot-bootstrap.py",
@@ -318,6 +318,10 @@
       "hash": "sha256:38f1aee3574e235a114db3d67646fd8ffbfd5d0a88cbb7a003acd220fab134a2"
     },
     {
+      "path": "resources/templates/周记模版.md",
+      "hash": "sha256:8c883f7e3dbbc0c46ee869d6c89b15d7d5c199fb9e344f45853f4b840a52638a"
+    },
+    {
       "path": "resources/templates/季度计划模版.md",
       "hash": "sha256:6846ff6c32440b9c658f2e4e8585aa2c426b7818f8f8f4b333bc3a9f54f9c149"
     },
@@ -332,10 +336,6 @@
     {
       "path": "resources/templates/月度反思模版.md",
       "hash": "sha256:e32bfb0501fb5ac0d43ed14ec0813cd67efd2c629887caa82d52800e1531917e"
-    },
-    {
-      "path": "resources/templates/周记模版.md",
-      "hash": "sha256:8c883f7e3dbbc0c46ee869d6c89b15d7d5c199fb9e344f45853f4b840a52638a"
     },
     {
       "path": "resources/tokenizer/deepseek-v41.json",
@@ -387,7 +387,7 @@
     },
     {
       "path": "scripts/release.ts",
-      "hash": "sha256:14bfcdf57ff7bf0be244762e26602ae76f7ee87c8ff5f1e6ddaccad15af22bc8"
+      "hash": "sha256:97375773765b81d29d0a7d859f3e092f0eb03bccd101b24fa6bdfef23f32aaad"
     }
   ]
 }
