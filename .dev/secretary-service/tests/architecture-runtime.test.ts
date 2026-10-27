@@ -173,6 +173,11 @@ it("D25 a changed prompt invalidates old write authority and new model jobs with
   await expect(workspaceCall(h.core,{input_id:input.id,call_id:"stale",operation:"write",path:"blocked.md",content:"must not write"})).rejects.toThrow("兼容组合");
   expect(fs.existsSync(path.join(h.root,"blocked.md"))).toBe(false);
 });
+it("D25b an oversized prompt set fails at startup instead of every model turn",()=>{
+  const h=setup();
+  atomicWrite(h.store.files.resolve(".agent/prompts/workflows.md","internal"),"必须遵守的长期规则。".repeat(3000));
+  expect(()=>loadRuntimeCombination(h.store,{LLM_MODEL:"deepseek-flash"})).toThrow("模型输入预算");
+});
 it("D10 workspace range reads detect a new file while successful own writes advance only the checked baseline",async()=>{
   const h=setup(),input=active(h),call=(args:any)=>workspaceCall(h.core,{input_id:input.id,call_id:crypto.randomUUID(),...args});
   await call({operation:"list"});await call({operation:"write",path:"03. Manual/one.md",content:"one"});

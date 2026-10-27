@@ -72,8 +72,19 @@ export class AstrBotClient implements AgentAdapter {
       });
       if (!response.ok) {
         const failure = await response.json().catch(() => null) as any;
-        const code = ["AGENT_BUSY", "BRIDGE_TIMEOUT", "AGENT_INVALID", "TOOL_LIMIT"].includes(failure?.error?.code)
-          ? failure.error.code : "AGENT_UNAVAILABLE";
+        // Model-side failures stay distinguishable from an unreachable bridge:
+        // a full input budget is a design signal, not a transport outage.
+        const code = [
+          "AGENT_BUSY",
+          "BRIDGE_TIMEOUT",
+          "AGENT_INVALID",
+          "TOOL_LIMIT",
+          "MODEL_INPUT_LIMIT",
+          "MODEL_PROVIDER_FAILED",
+          "MODEL_INVALID_FINAL",
+        ].includes(failure?.error?.code)
+          ? failure.error.code
+          : "AGENT_UNAVAILABLE";
         const reason = /^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(failure?.error?.reason ?? "") ? failure.error.reason : null;
         throw new AppError(code, "理解服务暂时不可用，已执行操作以回执为准", 503, { reason });
       }

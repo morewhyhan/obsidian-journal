@@ -1,9 +1,9 @@
 {
   "format": 1,
   "service_version": "0.1.0",
-  "source_commit": "6eefbc39870f832fce7008c7766cb21f93153061",
+  "source_commit": "b72fdc71bfdf449e9c2d40d421051e86e0ae0c5f",
   "source_commit_is_base_only": true,
-  "source_hash": "sha256:0d3ada1ba3b7e4e113569a728b4cfa44395806397158c74c713ac4d523047a49",
+  "source_hash": "sha256:e633fcdacc383b0351b0bfba5ee7fa88ec6974c688e52c3104d7316e25d35680",
   "lock_hash": "sha256:a1340b831039fad6ccb59eea32648172911a3773627c3f9113f507112401a651",
   "tools_hash": "sha256:25f0f499a36e456a3129cbfe5fc70ae7d748570350f69bb4a0f36b2408d5eec5",
   "plugin_version": "1.0.0",
@@ -15,7 +15,7 @@
   "files": [
     {
       "path": "apps/core/agent-client.ts",
-      "hash": "sha256:e918f12d2ef65b360988588eb4c8f37f8d3758b6125649cf264a9ef625c87287"
+      "hash": "sha256:609dfdfb20a753951f36411f283431cf7b2ffe3a1ef80ae4c3206ab9dc54158e"
     },
     {
       "path": "apps/core/agent-runtime.ts",
@@ -55,7 +55,7 @@
     },
     {
       "path": "apps/core/compatibility-runtime.ts",
-      "hash": "sha256:6e8ec3cef9f50c93936ffdf9cee5662d805e880cf3a51a3f0b72892b3c870c03"
+      "hash": "sha256:8d35f8e3ce23b3bc1efc7e6b70056f8dbf57b19ff885d0ed26ea1f8f73e80e40"
     },
     {
       "path": "apps/core/compatibility.ts",
@@ -363,7 +363,7 @@
     },
     {
       "path": "scripts/evaluate-model.py",
-      "hash": "sha256:56a7411e6e8011fb82fa8a46d45a94289fe5ec5532698c5cc418a43eddfa3df7"
+      "hash": "sha256:1f4ae0a2de3034a6462ccec590974b34d96b793becf5afe5f36e990d22dcc87c"
     },
     {
       "path": "scripts/fixture.ts",

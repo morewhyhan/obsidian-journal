@@ -38,10 +38,14 @@ async function until(check, milliseconds = 135000) {
 async function setup(time = '2026-10-26T01:50:00Z') {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'secretary-model-eval-'));
   fs.mkdirSync(path.join(root, '.agent'), { recursive: true });
+  // The evaluated runtime must use the deployed model budget, otherwise a
+  // longer prompt set is measured against a budget it never runs under.
+  const budget = process.env.SECRETARY_EVAL_BUDGET ? JSON.parse(process.env.SECRETARY_EVAL_BUDGET) : null;
   fs.writeFileSync(path.join(root, '.agent/config.json'), JSON.stringify({
     sync: { git: { enabled: false } },
     planning: { availability: [{ weekdays: [1,2,3,4,5,6,7], start: '10:00', end: '12:00' },
       { weekdays: [1,2,3,4,5,6,7], start: '14:00', end: '17:00' }], buffer_minutes: 10 },
+    ...(budget ? { agent: { budget } } : {}),
   }));
   for (const [dir, text] of [['01. Daily', '# Daily'], ['02. Decisions', '# Decisions'], ['03. Manual', '# Manual']]) {
     fs.mkdirSync(path.join(root, dir), { recursive: true });

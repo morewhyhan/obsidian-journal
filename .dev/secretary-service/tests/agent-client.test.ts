@@ -51,6 +51,29 @@ it("failure diagnostics keep safe categories without replay or arbitrary server 
   expect(error.message).not.toContain("PRIVATE");
   expect(fetch).toHaveBeenCalledTimes(1);
 });
+it("a full model input budget is reported as such and never as an unreachable agent", async () => {
+  const fetch = vi
+    .fn()
+    .mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            code: "MODEL_INPUT_LIMIT",
+            reason: "ValueError",
+            message: "PRIVATE_PROMPT_TEXT",
+          },
+        }),
+        { status: 503 },
+      ),
+    );
+  vi.stubGlobal("fetch", fetch);
+  const error = await new AstrBotClient("http://astrbot", "token")
+    .interpret(input, {})
+    .catch((e) => e);
+  expect(error).toMatchObject({ code: "MODEL_INPUT_LIMIT", details: { reason: "ValueError" } });
+  expect(error.message).not.toContain("PRIVATE");
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
 it("configured call and compose limits reach the adapter and startup waits for health", async () => {
   const bodies: any[] = [];
   const fetch = vi.fn(async (url: string, opts: any) => {

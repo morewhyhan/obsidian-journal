@@ -45,6 +45,8 @@ for key in ('LLM_BASE_URL','LLM_API_KEY','LLM_MODEL'):
     if not existing.get(key): raise SystemExit('Model configuration missing')
     env[key] = existing[key]
 env['SECRETARY_BRIDGE_TOKEN'] = secrets.token_hex(32)
+if os.environ.get('SECRETARY_EVAL_BUDGET'):
+    env['SECRETARY_EVAL_BUDGET'] = os.environ['SECRETARY_EVAL_BUDGET']
 tag = 'secretary-eval-' + secrets.token_hex(4)
 core, agent = tag + '-core', tag + '-agent'
 
@@ -87,7 +89,7 @@ def run_sdk():
         for test in ('test_agent_loop.py','test_bridge.py'):
             if (suite/test).is_file(): put(args.astrbot_container,suite/test,runtime)
         process=subprocess.Popen(command(args.astrbot_container,
-            ['ASTRBOT_ROOT','SECRETARY_BRIDGE_TOKEN','SECRETARY_CORE_URL','LLM_MODEL','SECRETARY_EVAL_AGENT_PORT'],
+            ['ASTRBOT_ROOT','SECRETARY_BRIDGE_TOKEN','SECRETARY_CORE_URL','LLM_MODEL','SECRETARY_EVAL_AGENT_PORT','SECRETARY_EVAL_BUDGET'],
             'python','-u',runtime+'/evaluate-astrbot.py'),env=env,text=True,stdout=log_file,stderr=subprocess.STDOUT)
         for _ in range(180):
             check=subprocess.run(command(args.core_container,['SECRETARY_BRIDGE_TOKEN','SECRETARY_ASTRBOT_URL'],
@@ -102,7 +104,7 @@ def run_sdk():
             env['SECRETARY_EVAL_OUTPUT']=runtime+'/evidence-'+str(iteration)
             result=subprocess.run(command(args.core_container,
                 ['SECRETARY_BRIDGE_TOKEN','LLM_BASE_URL','LLM_API_KEY','LLM_MODEL','SECRETARY_ASTRBOT_URL',
-                 'SECRETARY_EVAL_ISOLATED','SECRETARY_EVAL_PROJECT','SECRETARY_EVAL_OUTPUT','SECRETARY_EVAL_CASES','SECRETARY_EVAL_CORE_PORT'],
+                 'SECRETARY_EVAL_ISOLATED','SECRETARY_EVAL_PROJECT','SECRETARY_EVAL_OUTPUT','SECRETARY_EVAL_CASES','SECRETARY_EVAL_CORE_PORT','SECRETARY_EVAL_BUDGET'],
                 'node',runtime+'/suite/evaluate-model.mjs'),env=env,text=True)
             evidence=subprocess.check_output(['docker','exec',args.core_container,'cat',env['SECRETARY_EVAL_OUTPUT']+'/results.json'])
             name='results.json' if args.repeat==1 else 'results-'+str(iteration+1)+'.json'
@@ -173,7 +175,7 @@ try:
          '-e','SECRETARY_BRIDGE_TOKEN','-e','LLM_BASE_URL','-e','LLM_API_KEY','-e','LLM_MODEL',
          '-e','SECRETARY_EVAL_ISOLATED=1','-e','SECRETARY_EVAL_PROJECT=/app',
          '-e','SECRETARY_EVAL_OUTPUT=/evidence','-e','SECRETARY_ASTRBOT_URL=http://astrbot:3181',
-         '-e','SECRETARY_EVAL_CASES='+args.cases,
+         '-e','SECRETARY_EVAL_CASES='+args.cases,'-e','SECRETARY_EVAL_BUDGET',
          *runtime_mounts,'--user','0:0','--entrypoint','sh',args.core_image or source['Image'],'-c',
          'node -e "setTimeout(()=>{},1000000)"'], env=env, stdout=subprocess.DEVNULL)
     for _ in range(90):
