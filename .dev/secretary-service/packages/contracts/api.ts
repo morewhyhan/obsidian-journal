@@ -1,4 +1,6 @@
 import type { FastifyInstance } from "fastify";
+import { actionFields } from "./action-fields.js";
+import { workInputJsonSchema } from "./work.js";
 import {
   HABIT_STATUSES,
   HABIT_OCCURRENCE_STATUSES,
@@ -38,6 +40,12 @@ export const criterionSchema = object(
     unit: nullable(string(30)),
     verification: { enum: ["self_report", "tool"] },
     artifact_ref: nullable(string()),
+    artifact_check: {
+      oneOf: [
+        object({ kind: { const: "exists_nonempty" } }),
+        object({ kind: { const: "contains_all" }, terms: { type: "array", minItems: 1, maxItems: 20, uniqueItems: true, items: string(500) } }),
+      ],
+    },
   },
   ["kind", "description"],
 );
@@ -72,14 +80,106 @@ const initialPlan = {
       window_end: time,
       duration_minutes: { type: "number", exclusiveMinimum: 0 },
       next_action: string(2000),
-      kind: { enum: ["fixed", "window", "flexible"] },
+      kind: { enum: ["fixed", "window", "flexible"], description: "普通任务的时间块用window；fixed仅用于用户明确不能移动的预约或承诺。给出起止时刻本身不代表不可调整。" },
+      allow_reflow: { type: "boolean" },
+      overdue_recovery:{type:"boolean"},
     },
     ["window_start", "window_end", "duration_minutes", "next_action"],
   ),
   description:
     "用户同时交代新任务和执行时间时放在这里，Core原子创建任务与安排；不要猜测尚未生成的任务ID。没有明确窗口则省略，不承诺已经安排提醒。",
 };
+const localWindow = object({
+  start: { type: "string", pattern: "^([01]\\d|2[0-3]):[0-5]\\d$" },
+  end: { type: "string", pattern: "^([01]\\d|2[0-3]):[0-5]\\d$" },
+});
+const weeklyWindow = object({
+  ...localWindow.properties,
+  weekdays: recurrence.properties.weekdays,
+});
+const blocker = nullable(
+  object({
+    kind: {
+      enum: [
+        "time",
+        "scope",
+        "resource",
+        "ability",
+        "waiting",
+        "health",
+        "priority",
+      ],
+    },
+    detail: string(500),
+    review_at: nullable(time),
+  }),
+);
+const taskPlanning = object(
+  {
+    category: nullable(string(80)),
+    enabled: { type: "boolean" },
+    next_action: nullable(string(500)),
+    remaining_minutes: nullable({
+      type: "integer",
+      minimum: 0,
+      maximum: 100000,
+    }),
+    priority: { type: "integer", minimum: 1, maximum: 3 },
+    depends_on: {
+      type: "array",
+      maxItems: 30,
+      uniqueItems: true,
+      items: string(100),
+    },
+    not_before: nullable(time),
+    allow_split: { type: "boolean" },
+    blocker,
+  },
+  [],
+);
+const planningPreferences = object(
+  {
+    enabled: { type: "boolean" },
+    auto_create_daily: { type: "boolean" },
+    evening_time: localWindow.properties.start,
+    availability: { type: "array", maxItems: 32, items: weeklyWindow },
+    protected: { type: "array", maxItems: 32, items: weeklyWindow },
+    day_overrides: {
+      type: "array",
+      maxItems: 62,
+      items: object({
+        date,
+        windows: { type: "array", maxItems: 32, items: localWindow },
+      }),
+    },
+    buffer_minutes: { type: "integer", minimum: 0, maximum: 120 },
+    max_task_minutes: { type: "integer", minimum: 1, maximum: 960 },
+    max_tasks: { type: "integer", minimum: 1, maximum: 20 },
+    risk_horizon_days: { type: "integer", minimum: 1, maximum: 31 },
+    stale_days: { type: "integer", minimum: 1, maximum: 90 },
+    postponement_threshold: { type: "integer", minimum: 2, maximum: 10 },
+  },
+  [],
+);
 const types = [
+  "save_work", "control_work",
+  "set_personal_rule",
+  "control_rule",
+  "undo_rule",
+  "create_automation",
+  "update_automation",
+  "control_automation",
+  "report_automation",
+  "start_focus",
+  "pause_focus",
+  "resume_focus",
+  "stop_focus",
+  "set_period_focus",
+  "set_planning",
+  "configure_task",
+  "report_execution",
+  "plan_day",
+  "reject_proposal",
   "create_habit",
   "update_habit",
   "create_task",
@@ -102,10 +202,56 @@ export const actionSchema = {
   ...object(
     {
       type: { enum: types },
+      work: workInputJsonSchema,
+      key: string(80),
+      enabled: { type: "boolean" },
+      reminder_mode: { enum: ["window", "opportunistic", "off"] },
+      starts_at: time,
+      performed_at: { ...nullable(time), description: "行为/任务反馈的实际发生时刻，带时区；business_date为所属日期。报告时间由Core另记；未知不猜。" },
+      expected_rules_revision: { type: "integer", minimum: 0 },
+      timezone: string(80),
+      delay_seconds: { type: "integer", minimum: 1, maximum: 2678400 },
+      body: string(1000),
+      to_diary: { type: "boolean" },
+      strict: { type: "boolean" },
+      control: { enum: ["pause", "resume", "stop", "skip_today", "complete"] },
+      occurrence_id: string(100),
+      task_ref: nullable(string(100)),
+      work_minutes: { type: "integer", minimum: 1, maximum: 120 },
+      break_minutes: { type: "integer", minimum: 1, maximum: 120 },
+      rounds: { type: "integer", minimum: 1, maximum: 12 },
+      content: string(2000),
+      replace_section: { type: "boolean" },
+      base_hash: string(100),
+      schedule: object(
+        {
+          weekdays: recurrence.properties.weekdays,
+          starts_on: date,
+          ends_on: nullable(date),
+          local_start: localWindow.properties.start,
+          local_end: localWindow.properties.end,
+          minute: { type: "integer", minimum: 0, maximum: 59 },
+          every_hours: { type: "integer", minimum: 1, maximum: 24 },
+        },
+        ["weekdays", "starts_on", "local_start", "local_end"],
+      ),
+      planning: taskPlanning,
+      preferences: planningPreferences,
+      expected_planning_version: { type: "integer", minimum: 0 },
+      effort_minutes: { type: "integer", minimum: 0, maximum: 1440 },
+      execution: {
+        enum: ["started", "progress", "not_started", "not_done", "blocked"],
+      },
+      remaining_minutes: { type: "integer", minimum: 0, maximum: 100000 },
+      blocker,
+      plan_id: string(100),
+      allow_reflow: { type: "boolean" },
+      overdue_recovery:{type:"boolean",description:"仅用户明确选择逾期补救时为true；保留原硬截止和逾期事实，不能用于悄悄消除冲突。"},
       target_id: string(100),
       expected_version: version,
       title: string(200),
       min_behavior: string(500),
+      minimum_quantity: quantity,
       optional_target: quantity,
       recurrence,
       anchor,
@@ -134,7 +280,16 @@ export const actionSchema = {
       optional_target_met: nullable({ type: "boolean" }),
       event_key: string(100),
       criterion_id: string(64),
-      value: nullable({ type: "number", minimum: 0 }),
+      value: {
+        anyOf: [
+          { type: "null" },
+          { type: "number", minimum: 0 },
+          { type: "string", maxLength: 1000 },
+          { type: "boolean" },
+          { type: "array", maxItems: 128 },
+          { type: "object" },
+        ],
+      },
       unit: string(30),
       mode: { enum: ["total", "increment"] },
       report: string(500),
@@ -151,7 +306,7 @@ export const actionSchema = {
       duration_minutes: { type: "number", exclusiveMinimum: 0 },
       next_action: string(2000),
       initial_plan: initialPlan,
-      kind: string(100),
+      kind: { ...string(100), description: "create_automation：one_shot一次消息；recurring按所选日期每天仅在local_start发生一次；hourly_checkin按小时回顾；status_check按小时检查近况。每小时/每两小时不能使用recurring，更不能删掉minute来掩盖用户要的频率。其他动作按各自kind枚举。" },
       ends_at: time,
       fact: string(500),
       path: string(),
@@ -162,6 +317,9 @@ export const actionSchema = {
 };
 Object.assign(actionSchema, {
   allOf: [
+    ...Object.entries(actionFields).map(([type,fields])=>({
+      if:{properties:{type:{const:type}}},then:{propertyNames:{enum:fields}},
+    })),
     ...Object.entries({
       create_habit: ["draft", "active"],
       update_habit: HABIT_STATUSES,
@@ -194,6 +352,65 @@ Object.assign(actionSchema, {
       then: { properties: { kind: { const: "user_confirmed" } } },
     },
     {
+      if: { properties: { type: { enum: ["create_automation", "update_automation"] } } },
+      then: {
+        properties: { kind: { enum: ["one_shot", "recurring", "hourly_checkin", "status_check"] } },
+        allOf: [{
+          if: { properties: { kind: { const: "recurring" } }, required: ["kind"] },
+          then: { properties: { schedule: { not: { anyOf: [{ type: "object", required: ["minute"] }, { type: "object", required: ["every_hours"] }] } } } },
+        }, {
+          if: { properties: { type: { const: "create_automation" }, kind: { const: "one_shot" } }, required: ["kind"] },
+          then: { oneOf: [
+            { required: ["delay_seconds"], properties: { due_at: { type: "null" } } },
+            { required: ["due_at"], properties: { due_at: time }, not: { type: "object", required: ["delay_seconds"] } },
+          ] },
+        }, {
+          if: { properties: { type: { const: "create_automation" }, kind: { enum: ["recurring", "hourly_checkin", "status_check"] } }, required: ["kind"] },
+          then: { required: ["schedule"] },
+        }, {
+          if: { properties: { kind: { enum: ["recurring", "hourly_checkin", "status_check"] } }, required: ["kind"] },
+          then: { properties: { due_at: { type: "null" } }, not: { type: "object", required: ["delay_seconds"] } },
+        }],
+      },
+    },
+    {
+      if: { properties: { type: { const: "set_personal_rule" } } },
+      then: {
+        properties: { key: { anyOf: [
+          { enum: [
+            ...Object.keys(planningPreferences.properties).map((key) => "planning." + key),
+            "contact.style", "support.style", "contact.quiet_hours", "contact.suggestion_cap", "contact.minimum_gap_minutes",
+            "review.weekly_day", "support.review_after_minutes", "contact.enabled", "contact.focus_protection",
+            "recording.to_diary", "review.enabled", "support.enabled", "support.allow_prepare_next_action",
+          ] }, { type: "string", pattern: "^working\\.[a-z0-9_-]{1,60}$" },
+        ] } },
+        allOf: [
+          ...Object.entries({
+            ...Object.fromEntries(Object.entries(planningPreferences.properties).map(([key, schema]) => ["planning." + key, schema])),
+            "contact.style": string(300),
+            "support.style": { enum: ["direct", "gentle"] },
+            "contact.quiet_hours": localWindow,
+            "contact.suggestion_cap": { type: "integer", minimum: 0, maximum: 4 },
+            "contact.minimum_gap_minutes": { type: "integer", minimum: 60, maximum: 1440 },
+            "review.weekly_day": { type: "integer", minimum: 1, maximum: 7 },
+            "support.review_after_minutes": { type: "integer", minimum: 60, maximum: 10080 },
+            ...Object.fromEntries(["contact.enabled", "contact.focus_protection", "recording.to_diary", "review.enabled", "support.enabled", "support.allow_prepare_next_action"].map((key) => [key, { type: "boolean" }])),
+          }).map(([key, schema]) => ({
+            if: { properties: { key: { const: key } } }, then: { properties: { value: schema } },
+          })),
+          {
+            if: { properties: { key: { type: "string", pattern: "^working\\." } } },
+            then: { properties: { value: object({
+              instruction: string(600),
+              task_ids: { type: "array", maxItems: 20, items: string(100) },
+              categories: { type: "array", maxItems: 20, items: string(100) },
+              purpose: { enum: ["all", "planning", "support"] },
+            }) } },
+          },
+        ],
+      },
+    },
+    {
       if: {
         properties: {
           type: {
@@ -210,6 +427,17 @@ Object.assign(actionSchema, {
               "cancel_item",
               "link_diary",
               "project_diary",
+              "configure_task",
+              "report_execution",
+              "reject_proposal",
+              "update_automation",
+              "control_automation",
+              "report_automation",
+              "control_rule",
+              "undo_rule",
+              "pause_focus",
+              "resume_focus",
+              "stop_focus",
             ],
           },
         },
@@ -217,12 +445,24 @@ Object.assign(actionSchema, {
       then: { required: ["target_id", "expected_version"] },
     },
     ...Object.entries({
+      set_personal_rule: ["key", "value", "expected_rules_revision"],
+      save_work:["work"],control_work:["target_id","expected_version","control"],
+      control_rule: ["enabled", "expected_rules_revision"],
+      undo_rule: ["expected_rules_revision"],
+      create_automation: ["title", "kind"],
+      control_automation: ["control"],
+      report_automation: ["business_date", "occurrence_id", "report"],
+      set_period_focus: ["kind", "business_date", "content", "base_hash"],
       create_habit: ["title", "min_behavior", "recurrence", "anchor"],
       create_task: ["title", "outcome"],
       report_habit: ["business_date", "status"],
       report_event: ["event_key"],
       link_diary: ["path", "label"],
       remember_fact: ["fact"],
+      configure_task: ["planning"],
+      report_execution: ["execution"],
+      set_planning: ["preferences", "expected_planning_version"],
+      plan_day: ["business_date"],
     }).map(([type, required]) => ({
       if: { properties: { type: { const: type } } },
       then: { required },
@@ -237,7 +477,9 @@ export const proposalSchema = object(
       items: object({
         action_identity: string(300),
         actions: { type: "array", maxItems: 20, items: actionSchema },
-      }),
+        proposal_id:string(200),expected_version:version,
+        basis_refs:{type:"array",minItems:1,maxItems:8,items:object({kind:{enum:["current_input","proposal_decision","rule","delegation"]},id:string(200),version},["kind","id"])},
+      },["action_identity","actions"]),
     },
     clarification: {
       ...nullable(string(300)),
@@ -259,6 +501,7 @@ export const proposalSchema = object(
 const anyObject = { type: "object", additionalProperties: true };
 const hash = { type: "string", pattern: "^sha256:[0-9a-f]{64}$" };
 const schemas: Record<string, any> = {
+  "GET /export": {},
   "POST /auth/login": { body: object({ password: string(1024) }) },
   "POST /auth/logout": { body: object({}) },
   "GET /documents": { querystring: object({ path: string() }) },

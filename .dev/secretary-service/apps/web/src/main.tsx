@@ -50,6 +50,7 @@ function App() {
     [items, setItems] = useState<any>(null),
     [status, setStatus] = useState<any>(null),
     [error, setError] = useState(""),
+    [notice, setNotice] = useState(""),
     [sidebar, setSidebar] = useState(false),
     [search, setSearch] = useState<string | null>(null),
     [results, setResults] = useState<any[]>([]),
@@ -358,7 +359,9 @@ function App() {
   }
   async function command(body: unknown) {
     try {
-      await mutate("/commands", body);
+      const result = await mutate("/commands", body);
+      setNotice(result.message ?? "已保存");
+      setError("");
       await refresh();
     } catch (e) {
       handle(e);
@@ -585,6 +588,14 @@ function App() {
             </button>
           </div>
         </header>
+        {notice && (
+          <div className="assistant-receipt" role="status">
+            {notice}
+            <button aria-label="关闭回执" onClick={() => setNotice("")}>
+              关闭
+            </button>
+          </div>
+        )}
         {error && (
           <div className="error-banner" role="alert">
             {error}
@@ -906,6 +917,106 @@ function App() {
             <div className="eyebrow">一步一步，继续就好</div>
             <h1>今天，做一点。</h1>
             <p>习惯记下开始，任务对照结果。</p>
+            {items.assistant && (
+              <AssistantControls data={items.assistant} command={command} />
+            )}
+            {[items.planning, items.tomorrow]
+              .filter(Boolean)
+              .map((agenda: any, i: number) => (
+                <section className="agenda" key={agenda.date}>
+                  <div className="section-top">
+                    <h2>{i === 0 ? "今天的安排" : "明天的安排"}</h2>
+                    <button
+                      onClick={() =>
+                        void command({
+                          type: "plan_day",
+                          business_date: agenda.date,
+                        })
+                      }
+                    >
+                      整理安排
+                    </button>
+                  </div>
+                  {agenda.plans.length ? (
+                    agenda.plans.map((p: any) => (
+                      <div className="agenda-row" key={p.id}>
+                        <time>
+                          {new Date(p.window_start).toLocaleTimeString(
+                            "zh-CN",
+                            {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                              timeZone: "Asia/Shanghai",
+                            },
+                          )}
+                          —
+                          {new Date(p.window_end).toLocaleTimeString("zh-CN", {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                            timeZone: "Asia/Shanghai",
+                          })}
+                        </time>
+                        <div>
+                          <strong>{p.next_action}</strong>
+                          <small>
+                            {p.needs_replan
+                              ? "有冲突，等待调整"
+                              : p.kind === "fixed"
+                                ? "固定安排"
+                                : p.execution === "started" ||
+                                    p.execution === "progress"
+                                  ? "已开始，保留专注时间"
+                                  : "按此执行"}
+                          </small>
+                          {p.preparation.map((ref: any) => (
+                            <button
+                              className="material-link"
+                              key={ref.path}
+                              onClick={() => void open(ref.path)}
+                            >
+                              {label(ref.path)}
+                              {ref.heading ? " · " + ref.heading : ""}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="empty">
+                      {agenda.status === "not_prepared"
+                        ? "前一晚整理，第二天照着做。"
+                        : "暂时没有排入任务。"}
+                    </p>
+                  )}
+                  {agenda.issues.length > 0 && (
+                    <details
+                      className="agenda-issues"
+                      open={agenda.status === "needs_user"}
+                    >
+                      <summary>需要留意的事 · {agenda.issues.length}</summary>
+                      {agenda.issues.map((x: any) => (
+                        <div key={x.id}>
+                          <strong>{x.message}</strong>
+                          <p>{x.recommendation}</p>
+                        </div>
+                      ))}
+                    </details>
+                  )}
+                  {!agenda.preferences.availability.length &&
+                    !agenda.preferences.day_overrides.some(
+                      (d: any) => d.date === agenda.date,
+                    ) && (
+                      <button
+                        onClick={() => {
+                          setAssistant(true);
+                          setMessage(agenda.date + "可以安排任务的时间是：");
+                        }}
+                      >
+                        告诉助理可用时间
+                      </button>
+                    )}
+                </section>
+              ))}
             <section>
               <div className="section-top">
                 <h2>习惯</h2>
@@ -998,6 +1109,49 @@ function App() {
                           截止 {new Date(t.due_at).toLocaleString("zh-CN")}
                         </small>
                       )}
+                      {t.planning?.next_action && (
+                        <small>下一步：{t.planning.next_action}</small>
+                      )}
+                      {t.planning?.blocker && (
+                        <small>卡在：{t.planning.blocker.detail}</small>
+                      )}
+                      {!["draft", "done", "cancelled"].includes(t.status) && (
+                        <div className="execution-actions">
+                          <button
+                            onClick={() =>
+                              void command({
+                                type: "report_execution",
+                                target_id: t.id,
+                                expected_version: t.version,
+                                execution: "started",
+                              })
+                            }
+                          >
+                            开始了
+                          </button>
+                          <button
+                            onClick={() =>
+                              void command({
+                                type: "report_execution",
+                                target_id: t.id,
+                                expected_version: t.version,
+                                execution: "not_done",
+                                report: "本次暂未完成",
+                              })
+                            }
+                          >
+                            这次没做完
+                          </button>
+                          <button
+                            onClick={() => {
+                              setAssistant(true);
+                              setMessage("「" + t.title + "」卡在：");
+                            }}
+                          >
+                            卡住了
+                          </button>
+                        </div>
+                      )}
                     </div>
                     <span className="status-tag">
                       {t.status === "done"
@@ -1040,6 +1194,37 @@ function App() {
           <main className="items-page">
             <div className="eyebrow">保持简单，稳定运行</div>
             <h1>设置与状态</h1>
+            <section className="assistant-actions">
+              <a
+                className="button"
+                href="/api/v1/export"
+                download="secretary-data.json"
+              >
+                导出我的数据
+              </a>
+              <button
+                onClick={() =>
+                  api("/items")
+                    .then((r) =>
+                      mutate("/commands", {
+                        type: "set_personal_rule",
+                        key: "contact.enabled",
+                        value: false,
+                        expected_rules_revision: r.assistant.rules_revision,
+                      }),
+                    )
+                    .then(() => {
+                      setNotice(
+                        "已停止主动联系；你仍可查看、编辑和发消息。恢复时对助理说‘恢复主动联系’即可。",
+                      );
+                      return refresh();
+                    })
+                    .catch(handle)
+                }
+              >
+                停止主动联系
+              </button>
+            </section>
             {status && (
               <section>
                 {[
@@ -1316,6 +1501,302 @@ function App() {
         </aside>
       )}
     </div>
+  );
+}
+function AssistantControls({
+  data,
+  command,
+}: {
+  data: any;
+  command: (body: unknown) => Promise<void>;
+}) {
+  const [now, setNow] = useState(Date.now()),
+    [evening, setEvening] = useState(data.planning.evening_time),
+    [start, setStart] = useState("09:00"),
+    [end, setEnd] = useState("18:00"),
+    [showHourly, setShowHourly] = useState(false),
+    [busy, setBusy] = useState(false);
+  const revision = useRef(data.rules_revision),
+    offset = useRef(Date.parse(data.now) - Date.now()),
+    focus = data.focus;
+  useEffect(() => {
+    offset.current = Date.parse(data.now) - Date.now();
+  }, [data.now]);
+  useEffect(() => {
+    if (focus?.status !== "active") return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [focus?.status]);
+  async function send(body: unknown) {
+    setBusy(true);
+    try {
+      await command(body);
+    } finally {
+      setBusy(false);
+    }
+  }
+  const focusAction = (type: string) =>
+    send({ type, target_id: focus.id, expected_version: focus.version });
+  const active = (data.automations ?? []).filter(
+      (x: any) => x.status !== "retired",
+    ),
+    hourly = active.find((x: any) => x.kind === "hourly_checkin"),
+    remaining =
+      focus?.status === "active"
+        ? Math.max(0, Date.parse(focus.phase_due_at) - now - offset.current)
+        : (focus?.remaining_ms ?? 0);
+  const labels: Record<string, string> = {
+    "planning.evening_time": "晚间规划",
+    "contact.style": "表达方式",
+    "contact.quiet_hours": "静默时段",
+    "contact.suggestion_cap": "每日额外建议上限",
+    "contact.minimum_gap_minutes": "额外建议间隔（分钟）",
+    "recording.to_diary": "回顾写入日记",
+    "review.weekly_day": "周回看（星期）",
+    "review.enabled": "周期回看",
+    "planning.enabled": "自动规划",
+    "planning.availability": "可用时间",
+    "planning.protected": "保护时段",
+    "planning.day_overrides": "单日安排",
+    "contact.focus_protection": "专注保护",
+  };
+  const display = (v: any) =>
+    typeof v === "boolean"
+      ? v
+        ? "开启"
+        : "关闭"
+      : Array.isArray(v)
+        ? `${v.length}个时段`
+        : v && typeof v === "object"
+          ? `${v.start ?? ""}—${v.end ?? ""}`
+          : String(v);
+  return (
+    <section className="assistant-controls" aria-label="助理规则与专注">
+      <div className="section-top">
+        <h2>按自己的节奏</h2>
+        <button
+          disabled={busy}
+          onClick={() =>
+            void send({
+              type: "pause_contact",
+              ends_at: new Date(
+                Date.now() + offset.current + 3600000,
+              ).toISOString(),
+            })
+          }
+        >
+          暂停联系1小时
+        </button>
+        <button
+          disabled={busy}
+          onClick={() => void send({ type: "resume_contact" })}
+        >
+          恢复联系
+        </button>
+      </div>
+      <div className="assistant-shortcuts">
+        {focus &&
+        ["active", "paused", "needs_resume"].includes(focus.status) ? (
+          <div role="group" aria-label="当前专注">
+            <strong>
+              {focus.status === "needs_resume"
+                ? "中断后待继续"
+                : focus.phase === "working"
+                  ? "专注"
+                  : "休息"}{" "}
+              · 第{focus.round_index}/{focus.rounds}轮
+            </strong>
+            <output aria-label="计时剩余">
+              {Math.ceil(remaining / 60000)}分钟
+            </output>
+            {focus.status === "active" ? (
+              <button
+                disabled={busy}
+                onClick={() => void focusAction("pause_focus")}
+              >
+                暂停计时
+              </button>
+            ) : (
+              <button
+                disabled={busy}
+                onClick={() => void focusAction("resume_focus")}
+              >
+                继续计时
+              </button>
+            )}
+            <button
+              disabled={busy}
+              onClick={() => void focusAction("stop_focus")}
+            >
+              停止计时
+            </button>
+          </div>
+        ) : (
+          <button
+            disabled={busy}
+            onClick={() => void send({ type: "start_focus" })}
+          >
+            开始专注 · 25/5分钟 × 4轮
+          </button>
+        )}
+        {hourly ? (
+          <div role="group" aria-label="小时回顾">
+            <span>
+              小时回顾 · {hourly.status === "active" ? "已启用" : "已暂停"}
+            </span>
+            <button
+              disabled={busy}
+              onClick={() =>
+                void send({
+                  type: "control_automation",
+                  target_id: hourly.id,
+                  expected_version: hourly.version,
+                  control: hourly.status === "active" ? "skip_today" : "resume",
+                })
+              }
+            >
+              {hourly.status === "active" ? "今天不回顾" : "恢复回顾"}
+            </button>
+            <button
+              disabled={busy}
+              onClick={() =>
+                void send({
+                  type: "control_automation",
+                  target_id: hourly.id,
+                  expected_version: hourly.version,
+                  control: "stop",
+                })
+              }
+            >
+              关闭回顾
+            </button>
+          </div>
+        ) : (
+          <button onClick={() => setShowHourly(!showHourly)}>
+            设置小时回顾
+          </button>
+        )}
+      </div>
+      {showHourly && !hourly && (
+        <form
+          className="assistant-rule-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void send({
+              type: "create_automation",
+              kind: "hourly_checkin",
+              title: "小时回顾",
+              schedule: {
+                weekdays: [1, 2, 3, 4, 5],
+                starts_on: data.business_date,
+                local_start: start,
+                local_end: end,
+                minute: 55,
+              },
+              to_diary: false,
+            });
+          }}
+        >
+          <span>周一到周五，每小时55分；默认不写日记</span>
+          <label>
+            开始
+            <input
+              aria-label="小时回顾开始"
+              type="time"
+              required
+              value={start}
+              onChange={(e) => setStart(e.target.value)}
+            />
+          </label>
+          <label>
+            结束
+            <input
+              aria-label="小时回顾结束"
+              type="time"
+              required
+              value={end}
+              onChange={(e) => setEnd(e.target.value)}
+            />
+          </label>
+          <button disabled={busy}>启用小时回顾</button>
+        </form>
+      )}
+      <details>
+        <summary>规则与自动化</summary>
+        <form
+          className="assistant-rule-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void send({
+              type: "set_personal_rule",
+              key: "planning.evening_time",
+              value: evening,
+              expected_rules_revision: revision.current,
+            });
+          }}
+        >
+          <label>
+            晚间规划
+            <input
+              aria-label="晚间规划时间"
+              type="time"
+              required
+              value={evening}
+              onFocus={() => {
+                revision.current = data.rules_revision;
+              }}
+              onChange={(e) => setEvening(e.target.value)}
+            />
+          </label>
+          <button disabled={busy}>保存规划时间</button>
+        </form>
+        <p className="muted">
+          按服务时区执行；具体范围和表达方式也可以直接告诉助理。
+        </p>
+        {Object.entries(data.values ?? {})
+          .filter(([key]) => labels[key])
+          .map(([key, value]) => (
+            <p key={key}>
+              {labels[key]}：{display(value)}
+            </p>
+          ))}
+        {active
+          .filter((a: any) => a.kind !== "hourly_checkin")
+          .map((a: any) => (
+            <div key={a.id} className="assistant-shortcuts">
+              <span>
+                {a.title} · {a.status === "active" ? "运行中" : "已暂停"}
+              </span>
+              <button
+                disabled={busy}
+                onClick={() =>
+                  void send({
+                    type: "control_automation",
+                    target_id: a.id,
+                    expected_version: a.version,
+                    control: a.status === "active" ? "pause" : "resume",
+                  })
+                }
+              >
+                {a.status === "active" ? "暂停" : "恢复"}
+              </button>
+              <button
+                disabled={busy}
+                onClick={() =>
+                  void send({
+                    type: "control_automation",
+                    target_id: a.id,
+                    expected_version: a.version,
+                    control: "stop",
+                  })
+                }
+              >
+                停止
+              </button>
+            </div>
+          ))}
+      </details>
+    </section>
   );
 }
 function Space({

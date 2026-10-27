@@ -10,6 +10,10 @@ import {
 import { passwordHash } from "./auth.js";
 import { initializePrivateBackup, verifyGitHubPrivate } from "./git.js";
 import { AppError } from "../../packages/contracts/types.js";
+import { Store,restoreData } from "./store.js";
+import { SnapshotBackup,backupKey,decryptBackup } from "./snapshot-backup.js";
+import { recoveryInventory,releaseRecovery,type RecoveryScope } from "./recovery-control.js";
+import {approveRecoveryBudget} from "./model-budget.js";
 async function main() {
   const command = process.argv[2],
     env = process.env;
@@ -46,10 +50,45 @@ async function main() {
     console.log(JSON.stringify({ initialized: true, pushed: false }));
     return;
   }
+  if (command === "restore-data") {
+    const file = process.argv[3];
+    if (!file || fs.statSync(file).size > 96 * 1024 * 1024)
+      throw new AppError("EXPORT_INVALID", "需要有效的导出文件，最大96MiB");
+    let value=JSON.parse(fs.readFileSync(file,"utf8"));
+    if(value.format==="secretary-encrypted-backup") {
+      if(!env.SECRETARY_BACKUP_KEY_FILE)throw new AppError("BACKUP_KEY_REQUIRED","需要库外备份密钥文件");
+      value=decryptBackup(value,backupKey(env.SECRETARY_BACKUP_KEY_FILE,root));
+    }
+    console.log(
+      JSON.stringify(
+        restoreData(root,value),
+      ),
+    );
+    return;
+  }
+  if(command==="backup-data") {
+    const store=new Store(root,loadConfig(root));
+    try {
+      const backup=new SnapshotBackup(store,env.SECRETARY_BACKUP_DIR,env.SECRETARY_BACKUP_KEY_FILE);
+      await backup.tick(true);console.log(JSON.stringify(backup.status));
+      if(backup.status.state!=="saved")process.exitCode=1;
+    } finally {await store.close();}
+    return;
+  }
+  if(command==="recovery-check" || command==="recovery-release" || command==="recovery-budget") {
+    const store=new Store(root,loadConfig(root));
+    try {
+      const result=command==="recovery-budget"?approveRecoveryBudget(store,Number(process.argv[3]),Number(process.argv[4]),process.argv[5]??""):
+        command==="recovery-check"?recoveryInventory(store):releaseRecovery(store,process.argv[3]??"",
+        (process.argv[4]??"").split(",") as RecoveryScope[],process.argv[5]??"");
+      console.log(JSON.stringify(result,null,2));
+    } finally {await store.close();}
+    return;
+  }
   if (command !== "preflight")
     throw new AppError(
       "UNKNOWN_COMMAND",
-      "使用 preflight、password 或 init-backup",
+      "使用 preflight、password、init-backup、backup-data、restore-data <文件>、recovery-check 或 recovery-release <清单hash> <background_write,contact> reviewed-current-authority",
     );
   const cfg = loadConfig(root);
   validateProductionSettings({

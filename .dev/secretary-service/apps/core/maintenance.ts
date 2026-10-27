@@ -3,12 +3,16 @@ import path from "node:path";
 import { DateTime } from "luxon";
 import type { Store } from "./store.js";
 import { atomicWrite, id } from "./files.js";
+import { extractRetentionRefs } from "../../packages/domain/retention.js";
 export function cleanup(store: Store) {
   const now = store.now(),
     r = store.config.retention,
     ago = (days: number) =>
       DateTime.fromISO(now).minus({ days }).toUTC().toISO();
   let removed = 0;
+  const protectedRefs=extractRetentionRefs(store.registry());
+  if(store.time.read().trusted)store.updateRuntimeMeta(meta=>({...meta,replay_floor:new Date(Math.max(
+    Date.parse(meta.replay_floor??"1970-01-01T00:00:00Z"),Date.parse(now)-store.config.channel.accept_window_seconds*1000)).toISOString()}));
   store.db.transaction(() => {
     store.db
       .prepare(
@@ -33,9 +37,9 @@ export function cleanup(store: Store) {
     for (;;) {
       const result = store.db
         .prepare(
-          "DELETE FROM events WHERE status IN ('applied','cancelled') AND completed_at<? AND NOT EXISTS(SELECT 1 FROM events child WHERE child.parent_id=events.id)",
+          "DELETE FROM events WHERE status IN ('applied','cancelled') AND completed_at<? AND id NOT IN (SELECT value FROM json_each(?)) AND NOT EXISTS(SELECT 1 FROM events child WHERE child.parent_id=events.id)",
         )
-        .run(ago(r.events_completed_days));
+        .run(ago(r.events_completed_days),JSON.stringify([...protectedRefs.eventIds]));
       removed += result.changes;
       if (!result.changes) break;
     }
@@ -88,6 +92,7 @@ export function cleanup(store: Store) {
     (registry) => {
       registry.plans = registry.plans.filter(
         (plan) =>
+          protectedRefs.entityIds.has(plan.id) ||
           !(
             ["finished", "cancelled", "expired"].includes(plan.status) &&
             plan.window_end < cutoff
@@ -97,7 +102,17 @@ export function cleanup(store: Store) {
         (control) => control.ends_at >= cutoff,
       );
       registry.proposals = registry.proposals.filter(
-        (proposal) => proposal.expires_at >= cutoff,
+        (proposal) => protectedRefs.entityIds.has(proposal.id) || proposal.expires_at >= cutoff || !!proposal.decisions?.length,
+      );
+      registry.automations = registry.automations?.filter(
+        (a) => protectedRefs.entityIds.has(a.id) || a.status !== "retired" || a.updated_at >= cutoff,
+      );
+      registry.followups = registry.followups?.filter(
+        (f) =>
+          f.status !== "resolved" || !f.resolved_at || f.resolved_at >= cutoff,
+      );
+      registry.user_rules = registry.user_rules?.filter(
+        (r) => protectedRefs.entityIds.has(r.id) || !r.ends_at || r.ends_at >= cutoff,
       );
       for (const proposal of registry.proposals)
         if (proposal.status === "pending" && proposal.expires_at <= now)
@@ -113,7 +128,7 @@ export function cleanup(store: Store) {
     fs.statfsSync(store.root).bavail * fs.statfsSync(store.root).bsize >
       size * 2 + 1048576
   )
-    store.db.exec("VACUUM");
+    {const state=store.lifecycle;store.lifecycle="maintenance";try{store.db.exec("VACUUM");}finally{store.lifecycle=state;}}
   return { at: now, removed, database_bytes: size };
 }
 const localDateFor = (store: Store) =>

@@ -104,7 +104,8 @@
     "change_acceptance_requires_user": true
   },
   "interaction": {
-    "proactive_questions": false,
+    "proactive_questions": true,
+    "proactive_question_scope": "necessary_planning_decisions_only",
     "clarifications_per_turn": 1,
     "chase_unanswered_clarification": false,
     "receipt_required": false,
@@ -122,8 +123,22 @@
     "allow_explicit_user_creation": true,
     "auto_create_from_qq": false
   },
+  "planning": {
+    "enabled": true,
+    "evening_time": "21:00",
+    "availability": [],
+    "protected": [],
+    "day_overrides": [],
+    "buffer_minutes": 15,
+    "max_task_minutes": 240,
+    "max_tasks": 3,
+    "risk_horizon_days": 7,
+    "stale_days": 7,
+    "postponement_threshold": 3,
+    "auto_create_daily": true
+  },
   "scheduler": {
-    "tick_seconds": 30,
+    "tick_seconds": 1,
     "lookahead_hours": 24,
     "single_instance": true,
     "delivery_lease_seconds": 60

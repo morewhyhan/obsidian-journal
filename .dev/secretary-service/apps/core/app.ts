@@ -42,7 +42,12 @@ import { registerApiContracts } from "../../packages/contracts/api.js";
 import { RuntimeLog } from "./log.js";
 import { workspaceCall, type WorkspaceCall } from "./workspace.js";
 import { applicationCall, type ApplicationCall } from "./application.js";
-import { AGENT_TOOL_NAMES } from "../../packages/contracts/agent-tools.js";
+import { AGENT_TOOL_NAMES, AGENT_TOOLS } from "../../packages/contracts/agent-tools.js";
+import { ModelBudget } from "./model-budget.js";
+import { effectivePolicy } from "./policy.js";
+import { SnapshotBackup } from "./snapshot-backup.js";
+import { beginModelJob,endModelJob,modelDeadline } from "./model-job.js";
+import {loadRuntimeCombination} from "./compatibility-runtime.js";
 export type AppOptions = {
   vault: string;
   passwordHash: string;
@@ -67,6 +72,7 @@ export async function createApp(options: AppOptions) {
     store = new Store(options.vault, cfg, options.clock),
     core = new Core(store),
     origin = options.origin ?? "http://localhost:3180";
+  if(env.NODE_ENV==="production" && !options.clock)store.time.verifySynchronized(env.SECRETARY_TIME_SYNCHRONIZED==="1");
   const app = Fastify({
     logger: false,
     bodyLimit: cfg.web.max_document_bytes * 3,
@@ -82,18 +88,7 @@ export async function createApp(options: AppOptions) {
   await app.register(multipart, {
     limits: { files: 1, fileSize: cfg.web.max_attachment_bytes },
   });
-  const instructions = ["system.md", "persona.md", "workflows.md"]
-    .map((name) => {
-      const override = store.files.resolve(
-        ".agent/prompts/" + name,
-        "internal",
-      );
-      return fs.readFileSync(
-        fs.existsSync(override) ? override : resource("prompts/" + name),
-        "utf8",
-      );
-    })
-    .join("\n\n");
+  const combination=loadRuntimeCombination(store,env),instructions=combination.instructions;
   const configuredAgent =
     options.agent ??
     (env.SECRETARY_ASTRBOT_URL && bridgeToken
@@ -114,15 +109,18 @@ export async function createApp(options: AppOptions) {
     self_test: options.agent ? "injected" : "not_run",
     last_success: null as string | null,
     error: null as string | null,
+    consecutive_failures:0,
+    retry_at:null as string|null,
   };
   let modelCheck: Promise<void> | undefined,
     lastModelCheck = 0;
   let modelRetry: NodeJS.Timeout | undefined;
   const checkAgent = () => {
-    const retryCooldown = agentStatus.self_test === "failed" ? 5000 : 300000;
+    const retryCooldown=agentStatus.consecutive_failures>=3?600000:agentStatus.consecutive_failures===2?30000:agentStatus.consecutive_failures===1?5000:0;
     if (
       !(configuredAgent instanceof AstrBotClient) ||
       core.working ||
+      !!store.runtimeMeta().model_job ||
       agentStatus.self_test === "passed" ||
       modelCheck ||
       store.clock().getTime() - lastModelCheck < retryCooldown
@@ -133,6 +131,7 @@ export async function createApp(options: AppOptions) {
     modelCheck = configuredAgent
       .check()
       .then(() => {
+        agentStatus.consecutive_failures=0;agentStatus.retry_at=null;
         agentStatus.self_test = "passed";
         agentStatus.last_success = store.now();
         agentStatus.error = null;
@@ -140,14 +139,18 @@ export async function createApp(options: AppOptions) {
         void core.processPending();
       })
       .catch(() => {
-        agentStatus.self_test = "failed";
+        agentStatus.consecutive_failures++;
+        agentStatus.self_test = agentStatus.consecutive_failures>=3?"circuit_open":"failed";
         agentStatus.error = "MODEL_SELF_TEST_FAILED";
         core.agent = undefined;
       })
       .finally(() => {
         modelCheck = undefined;
-        if (agentStatus.self_test === "failed" && !closing) {
-          modelRetry = setTimeout(checkAgent, 5000);
+        if (["failed","circuit_open"].includes(agentStatus.self_test) && !closing) {
+          const delay=agentStatus.consecutive_failures>=3?600000:agentStatus.consecutive_failures===2?30000:5000;
+          agentStatus.retry_at=new Date(store.clock().getTime()+delay).toISOString();
+          if(modelRetry)clearTimeout(modelRetry);
+          modelRetry = setTimeout(checkAgent, delay);
           modelRetry.unref();
         }
         core.emit("health_changed", {
@@ -180,6 +183,7 @@ export async function createApp(options: AppOptions) {
       withWriteLock: (work) => store.exclusive(work),
     });
   const maintenance = new Maintenance(store);
+  const snapshotBackup=new SnapshotBackup(store,env.SECRETARY_BACKUP_DIR,env.SECRETARY_BACKUP_KEY_FILE);
   const streams = new Set<import("node:http").ServerResponse>();
   const log = new RuntimeLog(store);
   core.subscribers.add((event) => {
@@ -217,6 +221,10 @@ export async function createApp(options: AppOptions) {
             : "操作暂未完成，请保留草稿",
         request_id: request.id,
         details: own ? error.details : {},
+        stage:own?error.stage:"transport",
+        effect:own?error.effect:"unknown",
+        retry_policy:own?error.retry_policy:"reconcile_only",
+        scope:own?error.details.capability??"request":"request",
       },
     });
   });
@@ -270,8 +278,9 @@ export async function createApp(options: AppOptions) {
   });
   app.get("/healthz", () => ({ ok: true }));
   app.get("/readyz", async (_request, reply) => {
+    const state = store.state.snapshot();
     try {
-      if (store.closed) throw new Error("closed");
+      if (store.closed || !state.accepts_work || !store.compatibility!.verify()) throw new Error("not_ready");
       store.db.prepare("SELECT 1").get();
       fs.accessSync(store.root, fs.constants.R_OK | fs.constants.W_OK);
       const pending = store.db
@@ -280,9 +289,13 @@ export async function createApp(options: AppOptions) {
         )
         .get() as { n: number };
       if (pending.n) throw new Error("recovering");
-      return { ready: true };
-    } catch {
-      return reply.code(503).send({ ready: false });
+      return { ready: true, ...state };
+    } catch (error) {
+      return reply.code(503).send({
+        ready: false,
+        ...state,
+        reason: (error as Error)?.message ?? "not_ready",
+      });
     }
   });
   const loginFailures = new Map<string, { count: number; since: number }>();
@@ -341,6 +354,17 @@ export async function createApp(options: AppOptions) {
   app.get("/api/v1/auth/session", () => ({ authenticated: true }));
   app.get("/api/v1/openapi.json", () => openapi());
   app.get("/api/v1/tree", () => ({ paths: store.files.list() }));
+  app.get("/api/v1/export", async (_request, reply) => {
+    const data = await store.exclusive(() => {
+      core.recoverPending();
+      return store.exportData();
+    });
+    reply.header(
+      "Content-Disposition",
+      'attachment; filename="secretary-data.json"',
+    );
+    return data;
+  });
   app.get<{ Querystring: { path: string } }>(
     "/api/v1/documents",
     async (request) => store.document(request.query.path),
@@ -441,24 +465,7 @@ export async function createApp(options: AppOptions) {
     async (request) => {
       const q = (request.query.q ?? "").trim().toLocaleLowerCase();
       if (!q || q.length > 200) return { results: [] };
-      const found = store.files
-        .list()
-        .filter((p) => !p.startsWith("Template/"))
-        .flatMap((p) => {
-          const text = store.files.read(p),
-            n = text.toLocaleLowerCase().indexOf(q);
-          return p.toLocaleLowerCase().includes(q) || n >= 0
-            ? [
-                {
-                  path: p,
-                  snippet: text.slice(
-                    Math.max(n - 40, 0),
-                    Math.max(n - 40, 0) + 160,
-                  ),
-                },
-              ]
-            : [];
-        });
+      const found = store.files.search(store.files.list().filter(p=>!p.startsWith("Template/")),q);
       return {
         total: found.length,
         results: found.slice(
@@ -610,7 +617,14 @@ export async function createApp(options: AppOptions) {
     });
   });
   app.get("/api/v1/status", () => ({
+    runtime:{state:store.lifecycle,generation:store.generation,registry_schema:store.registry().schema_version,policy:effectivePolicy(store),
+      compatibility:{fingerprint:combination.fingerprint,current:store.compatibility!.verify(),manifest:combination.manifest}},
+    snapshot_backup:snapshotBackup.status,
+    diagnostics:log.summary(),
+    model_budget:{usage:modelBudget.status(),recovery_protected:!!store.runtimeMeta().budget_guard},
     scheduler: { last_tick: scheduler.lastTick, error: scheduler.lastError },
+    planning: { error: core.coordinator.lastError },
+    assistant: { error: core.assistant.lastError },
     qq: channel.health(),
     agent: agentStatus,
     logs: { error: log.error },
@@ -782,7 +796,7 @@ export async function createApp(options: AppOptions) {
         .header("X-Content-Type-Options", "nosniff")
         .type(type[ext] ?? "application/octet-stream");
       if (!type[ext]) reply.header("Content-Disposition", "attachment");
-      return fs.createReadStream(p);
+      return store.files.readBytes(request.query.path,"attachment",cfg.web.max_attachment_bytes);
     },
   );
   app.post<{
@@ -920,8 +934,16 @@ export async function createApp(options: AppOptions) {
             call_id: { type: "string", maxLength: 200 },
             operation: {
               enum: [
+                "apply_changes", "save_proposals", "resolve_proposals", "conversation",
                 "preferences",
+                "followups",
+                "rules",
+                "automations",
+                "focus",
+                "board",
+                "planning_context",
                 "capabilities",
+                "planning",
                 "periods",
                 "create_period",
                 "state",
@@ -959,6 +981,10 @@ export async function createApp(options: AppOptions) {
             recovery_id: { type: "string", maxLength: 150 },
             commit: { type: "string", maxLength: 40 },
             base_hash: { type: "string", maxLength: 100 },
+            action_groups: AGENT_TOOLS.find(t => t.name === "secretary")!.parameters.properties.action_groups,
+            commit_mode: AGENT_TOOLS.find(t => t.name === "secretary")!.parameters.properties.commit_mode,
+            decisions: AGENT_TOOLS.find(t => t.name === "secretary")!.parameters.properties.decisions,
+            summary: { type: "string", maxLength: 500 },
           },
         },
       },
@@ -968,6 +994,8 @@ export async function createApp(options: AppOptions) {
         backup,
         status: () => ({
           model: agentStatus,
+          planning: { error: core.coordinator.lastError },
+          assistant: { error: core.assistant.lastError },
           qq: channel.health(),
           scheduler: {
             last_tick: scheduler.lastTick,
@@ -1007,6 +1035,16 @@ export async function createApp(options: AppOptions) {
       return result;
     },
   );
+  const modelBudget=new ModelBudget(store,env.LLM_MODEL);
+  app.post<{Body:{input_id:string;kind:"front"|"background"|"compose"|"self_test";tools_hash?:string}}>("/internal/model/jobs/start",{
+    schema:{body:{type:"object",additionalProperties:false,required:["input_id","kind","tools_hash"],properties:{input_id:{type:"string",maxLength:200},kind:{enum:["front","background","compose","self_test"]},tools_hash:{type:"string",pattern:"^sha256:[a-f0-9]{64}$"}}}},
+  },async request=>store.exclusive(()=>{
+    if(request.body.tools_hash!==hash(JSON.stringify(AGENT_TOOLS)))throw new AppError("AGENT_CONTRACT_MISMATCH","工具合同与Core不兼容",409);
+    return beginModelJob(store,request.body.input_id,request.body.kind);
+  }));
+  app.post<{Body:{job_id:string}}>("/internal/model/jobs/end",{
+    schema:{body:{type:"object",additionalProperties:false,required:["job_id"],properties:{job_id:{type:"string",maxLength:200}}}},
+  },async request=>store.exclusive(()=>{endModelJob(store,request.body.job_id);return {ended:true};}));
   let modelInFlight = false;
   const modelRequests = new Set<AbortController>();
   app.post(
@@ -1079,8 +1117,11 @@ export async function createApp(options: AppOptions) {
           : "max_tokens";
       forwarded[tokenField] = Math.max(
         1,
-        Math.min(4096, Math.floor(Number(body[tokenField]) || 4096)),
+        Math.min(cfg.agent.budget.request_output_tokens, Math.floor(Number(body[tokenField]) || cfg.agent.budget.request_output_tokens)),
       );
+      const deadline=modelDeadline(store,env.NODE_ENV==="production");
+      const reservation=modelBudget.reserve({messages:forwarded.messages,tools:forwarded.tools},forwarded[tokenField],store.runtimeMeta().model_job?.id??"fixture-unbound");
+      let usage:any=null;
       const abort = new AbortController();
       modelRequests.add(abort);
       modelInFlight = true;
@@ -1098,7 +1139,7 @@ export async function createApp(options: AppOptions) {
             body: JSON.stringify(forwarded),
             signal: AbortSignal.any([
               abort.signal,
-              AbortSignal.timeout(125000),
+              AbortSignal.timeout(Math.min(125000,deadline)),
             ]),
             redirect: "error",
           },
@@ -1129,8 +1170,16 @@ export async function createApp(options: AppOptions) {
           chunks.push(buffer);
         }
         reply.type(response.headers.get("content-type") ?? "application/json");
-        return Buffer.concat(chunks);
+        const content=Buffer.concat(chunks);
+        try {
+          if(forwarded.stream) {
+            for(const line of content.toString("utf8").split(/\r?\n/))
+              if(line.startsWith("data: ") && line.slice(6)!=="[DONE]") {const frame=JSON.parse(line.slice(6));if(frame.usage)usage=frame.usage;}
+          } else usage=JSON.parse(content.toString("utf8")).usage??null;
+        }catch{/* Missing usage keeps the complete conservative reservation. */}
+        return content;
       } finally {
+        modelBudget.settle(reservation,usage);
         reply.raw.off("close", cancel);
         modelRequests.delete(abort);
         modelInFlight = false;
@@ -1166,12 +1215,16 @@ export async function createApp(options: AppOptions) {
     const cycle = () => {
       if (closing || cycleTask) return;
       cycleTask = (async () => {
-        await scheduler.tick();
+        await core.coordinator.tick();
+        await core.assistant.tick();
+        void scheduler.tick();
         if (closing) return;
         checkAgent();
         void core.processPending();
+        core.assistant.startPlanning();
         void backup.tick();
         const previousCleanup = maintenance.last?.at;
+        await snapshotBackup.tick();
         await maintenance.tick();
         if (previousCleanup !== maintenance.last?.at) backup.changed();
       })()
@@ -1194,13 +1247,15 @@ export async function createApp(options: AppOptions) {
     configuredAgent?.close?.();
     await (coreStopping ?? core.stop());
     await cycleTask;
+    await core.assistant.drain();
     await modelCheck;
-    await scheduler.drain();
+    await scheduler.drain(true);
     await backup.drain();
     await store.close();
   });
   app.addHook("preClose", async () => {
     closing = true;
+    store.lifecycle="draining";
     scheduler.close();
     coreStopping = core.stop();
     if (timer) clearInterval(timer);

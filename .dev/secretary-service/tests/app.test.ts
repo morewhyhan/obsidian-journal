@@ -8,6 +8,9 @@ import {
   taskAction,
 } from "./helpers.js";
 import { id, hash, atomicWrite } from "../apps/core/files.js";
+import fs from "node:fs";
+import { Store, restoreData } from "../apps/core/store.js";
+import { loadConfig } from "../apps/core/config.js";
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const close of cleanups.splice(0)) await close();
@@ -42,6 +45,230 @@ async function setup() {
   });
   return { ...instance, root, headers };
 }
+it("unknown command fields are rejected rather than silently stripped before execution",async()=>{
+  const h=await setup();
+  const response=await h.app.inject({method:"POST",url:"/api/v1/commands",headers:h.headers(),payload:{...taskAction,unrecognized_next_action:"必须不能被静默丢弃"}});
+  expect(response.statusCode).toBe(400);
+  expect(h.store.registry().tasks).toHaveLength(0);
+});
+it("T36 authenticated export restores exact Markdown, attachments and private rules into a separate empty vault", async () => {
+  const h = await setup(),
+    text = "# 原文\r\n\r\n这不是数据库全文。\r\n";
+  atomicWrite(h.store.files.resolve("03. Manual/exact.md"), text);
+  const image = Buffer.from([0, 255, 17, 42]);
+  atomicWrite(h.store.files.resolve("Attachment/a.bin", "attachment"), image);
+  atomicWrite(
+    h.store.files.resolve(".agent/data/do-not-export.secret", "internal"),
+    "secret-exclusion-fixture",
+  );
+  await h.core.execute(
+    {
+      id: "rule-export",
+      channel: "web",
+      actor_ref: "user",
+      external_id: "rule-export",
+      text: "停止主动联系",
+      occurred_at: h.store.now(),
+    },
+    [
+      {
+        type: "set_personal_rule",
+        key: "contact.enabled",
+        value: false,
+        expected_rules_revision: 0,
+      },
+    ],
+    "export-rule",
+    true,
+  );
+  expect((await h.app.inject({ url: "/api/v1/export" })).statusCode).toBe(401);
+  const result = await h.app.inject({
+    url: "/api/v1/export",
+    headers: h.headers(),
+  });
+  expect(result.statusCode).toBe(200);
+  expect(result.headers["content-disposition"]).toContain("attachment");
+  expect(result.body).not.toContain("secret-exclusion-fixture");
+  expect(result.json().files.some((entry:{path:string})=>/\.sqlite(?:-|$)/.test(entry.path))).toBe(false);
+  const target = temporary();
+  let restored: Store | undefined;
+  cleanups.push(async () => {
+    await restored?.close();
+    removeTemporary(target);
+  });
+  restoreData(target, result.json());
+  restored = new Store(target, loadConfig(target));
+  expect(restored.files.read("03. Manual/exact.md")).toBe(text);
+  expect(
+    fs.readFileSync(restored.files.resolve("Attachment/a.bin", "attachment")),
+  ).toEqual(image);
+  expect(
+    restored.registry().user_rules?.find((x) => x.key === "contact.enabled")
+      ?.value,
+  ).toBe(false);
+  expect(restored.recoveryUntil).toBeTruthy();
+  expect(
+    restored.db.prepare("SELECT count(*) n FROM inbox").get(),
+  ).toMatchObject({ n: 0 });
+});
+it("real one-second background polling queues ten due subscriptions within the five-second local timing target", async () => {
+  const root = temporary(),
+    instance = await createApp({
+      vault: root,
+      passwordHash: passwordHash("timing-test-password"),
+      sessionKey: "timing-test-key",
+      origin: "http://localhost:3180",
+      secure: false,
+      env: {},
+    });
+  cleanups.push(async () => {
+    await instance.app.close();
+    removeTemporary(root);
+  });
+  const due = new Date(Date.now() + 2000).toISOString();
+  await instance.core.execute(
+    {
+      id: "timing",
+      channel: "web",
+      actor_ref: "user",
+      external_id: "timing",
+      text: "提醒测试",
+      occurred_at: instance.store.now(),
+    },
+    Array.from({ length: 10 }, (_, n) => ({
+      type: "create_automation",
+      kind: "one_shot",
+      title: "timing" + n,
+      due_at: due,
+    })),
+    "timing",
+    true,
+  );
+  await expect
+    .poll(
+      () => {
+        const rows = instance.store.db
+          .prepare(
+            "SELECT source_versions_json FROM outbox WHERE counts_as_proactive=1",
+          )
+          .all() as any[];
+        return new Set(
+          rows.flatMap((row) =>
+            Object.keys(JSON.parse(row.source_versions_json)).filter((k) =>
+              k.startsWith("occ:"),
+            ),
+          ),
+        ).size;
+      },
+      { timeout: 7000, interval: 100 },
+    )
+    .toBe(10);
+  const rows = instance.store.db
+      .prepare(
+        "SELECT source_versions_json,created_at FROM outbox WHERE counts_as_proactive=1",
+      )
+      .all() as any[],
+    delays = rows
+      .flatMap((row) =>
+        Object.keys(JSON.parse(row.source_versions_json))
+          .filter((k) => k.startsWith("occ:"))
+          .map(() => Date.parse(row.created_at) - Date.parse(due)),
+      )
+      .sort((a, b) => a - b);
+  expect(delays.length).toBe(10);
+  expect(delays[Math.ceil(delays.length * 0.95) - 1]).toBeLessThanOrEqual(5000);
+}, 12000);
+it("T36 legacy auxiliary state round-trips without weakening registry or daily revision checks", async () => {
+  const h = await setup(),
+    auxiliary = ".agent/state/legacy-channel.json",
+    text = '{"schema_version":1,"app_id":"old-app","user_id":"old-user","bound_at":"2026-01-01T00:00:00Z"}\r\n';
+  atomicWrite(h.store.files.resolve(auxiliary, "internal"), text);
+  const bundle = h.store.exportData(), target = temporary();
+  cleanups.push(async () => removeTemporary(target));
+  restoreData(target, bundle);
+  expect(fs.readFileSync(target + "/" + auxiliary, "utf8")).toBe(text);
+
+  const invalidDay = JSON.stringify({ schema_version: 1, business_date: "2026-10-23" });
+  const invalidRegistry = JSON.stringify({ ...h.store.registry(), revision: undefined });
+  for (const [relative, content] of [
+    [bundle.storage.day_records + "/2026-10-23.json", invalidDay],
+    [bundle.storage.registry, invalidRegistry],
+    [auxiliary, JSON.stringify({ schema_version: 1, revision: "wrong" })],
+  ]) {
+    const empty = temporary();
+    cleanups.push(async () => removeTemporary(empty));
+    const malformed = {
+      ...bundle,
+      files: [...bundle.files.filter((x) => x.path !== relative),
+        { path: relative, encoding: "utf8", content, hash: hash(content) }],
+    };
+    expect(() => restoreData(empty, malformed)).toThrow("状态格式不兼容");
+    expect(fs.readdirSync(empty)).toHaveLength(0);
+  }
+});
+it("T36 restore validates the entire package before writing and refuses occupied or escaping destinations", async () => {
+  const h = await setup(),
+    bundle = h.store.exportData(),
+    target = temporary();
+  cleanups.push(async () => removeTemporary(target));
+  const malicious = {
+    ...bundle,
+    files: [
+      ...bundle.files,
+      { path: "../escape.md", encoding: "utf8", content: "x", hash: hash("x") },
+    ],
+  };
+  expect(() => restoreData(target, malicious)).toThrow();
+  expect(fs.readdirSync(target)).toHaveLength(0);
+  atomicWrite(target + "/keep.md", "keep");
+  expect(() => restoreData(target, bundle)).toThrow("空数据目录");
+  expect(fs.readFileSync(target + "/keep.md", "utf8")).toBe("keep");
+});
+it("typed HTTP commands accept persistent rules and automation while enforcing current revisions", async () => {
+  const h = await setup();
+  const send = (payload: unknown) =>
+    h.app.inject({
+      method: "POST",
+      url: "/api/v1/commands",
+      headers: h.headers(),
+      payload: payload as any,
+    });
+  expect(
+    (
+      await send({
+        type: "set_personal_rule",
+        key: "planning.evening_time",
+        value: "20:00",
+        expected_rules_revision: 0,
+      })
+    ).statusCode,
+  ).toBe(200);
+  const stale = await send({
+    type: "set_personal_rule",
+    key: "planning.evening_time",
+    value: "19:00",
+    expected_rules_revision: 0,
+  });
+  expect(stale.statusCode).toBe(409);
+  const reminder = await send({
+    type: "create_automation",
+    kind: "one_shot",
+    title: "API Hello",
+    body: "Hello",
+    delay_seconds: 30,
+  });
+  expect(reminder.statusCode, reminder.body).toBe(200);
+  expect(reminder.json().message).toContain("提醒已保存");
+  expect(
+    (
+      await send({
+        type: "control_automation",
+        target_id: reminder.json().updated_ids[0],
+        control: "stop",
+      })
+    ).statusCode,
+  ).toBe(400);
+});
 describe("Web API and diary integration", () => {
   it("mixed tool verification saves a user checkbox as pending feedback without falsely completing the task or breaking recovery", async () => {
     const h = await setup(),
@@ -72,6 +299,7 @@ describe("Web API and diary integration", () => {
                 description: "存在交付文件",
                 verification: "tool",
                 artifact_ref: "03. Manual/report.md",
+                artifact_check: { kind: "exists_nonempty" },
               },
             ],
           },

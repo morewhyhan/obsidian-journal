@@ -11,6 +11,7 @@
     "write_owner": "secretary-core"
   },
   "agent": {
+    "budget": {"request_input_tokens":16384,"request_output_tokens":4096,"daily_requests":120,"daily_tokens":500000},
     "provider": "astrbot",
     "integration": "astrbot_plugin",
     "session_storage": "memory",
@@ -41,6 +42,8 @@
     "authentication": "single_user_scrypt_cookie"
   },
   "channel": {
+    "accept_window_seconds":1800,
+    "future_skew_seconds":120,
     "primary": "qq",
     "adapter": "napcat_astrbot_reverse_ws",
     "enabled": false,
@@ -104,7 +107,8 @@
     "change_acceptance_requires_user": true
   },
   "interaction": {
-    "proactive_questions": false,
+    "proactive_questions": true,
+    "proactive_question_scope": "necessary_planning_decisions_only",
     "clarifications_per_turn": 1,
     "chase_unanswered_clarification": false,
     "receipt_required": false,
@@ -122,8 +126,22 @@
     "allow_explicit_user_creation": true,
     "auto_create_from_qq": false
   },
+  "planning": {
+    "enabled": true,
+    "evening_time": "21:00",
+    "availability": [],
+    "protected": [],
+    "day_overrides": [],
+    "buffer_minutes": 15,
+    "max_task_minutes": 240,
+    "max_tasks": 3,
+    "risk_horizon_days": 7,
+    "stale_days": 7,
+    "postponement_threshold": 3,
+    "auto_create_daily": true
+  },
   "scheduler": {
-    "tick_seconds": 30,
+    "tick_seconds": 1,
     "lookahead_hours": 24,
     "single_instance": true,
     "delivery_lease_seconds": 60

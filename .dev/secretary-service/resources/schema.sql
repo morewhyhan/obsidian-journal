@@ -8,7 +8,8 @@ BEGIN;
 
 CREATE TABLE schema_meta (
   version INTEGER PRIMARY KEY CHECK(version > 0),
-  applied_at TEXT NOT NULL
+  applied_at TEXT NOT NULL,
+  runtime_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(runtime_json))
 );
 INSERT INTO schema_meta(version, applied_at)
 VALUES (1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));

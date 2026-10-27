@@ -10,14 +10,28 @@ import {
   type Task,
   type Plan,
   type NoteRef,
+  type PlanningSettings,
   HABIT_STATUSES,
   HABIT_OCCURRENCE_STATUSES,
   TASK_UPDATE_STATUSES,
   CRITERION_STATUSES,
 } from "../contracts/types.js";
-import { id } from "../../apps/core/files.js";
+import { id } from "../shared/identity.js";
+import { workAction } from "./work.js";
 import { day } from "../calendar/index.js";
 import { earliestSlot } from "./scheduling.js";
+import {
+  ruleAction,
+  automationAction,
+  syncPlanningRules,
+} from "./assistant.js";
+import {
+  updateTaskPlanning,
+  planningSettings,
+  taskPlanning,
+  validatePlanningSettings,
+  reflow,
+} from "./planning.js";
 type Context = {
   operation: string;
   source: Source;
@@ -28,24 +42,29 @@ type Context = {
   verified?: Map<string, Source>;
   rememberFact?: (fact: string) => void;
   validateNoteRef?: (path: string) => void;
+  planningDefaults?: PlanningSettings;
 };
 export const verificationKey = (
   taskId: string,
   criterion: {
     id: string;
     kind: string;
+    description?: string;
     artifact_ref: string | null;
     target: number | null;
     unit: string | null;
+    artifact_check?: Task["acceptance"][number]["artifact_check"];
   },
 ) =>
   JSON.stringify([
     taskId,
     criterion.id,
     criterion.kind,
+    criterion.description ?? null,
     criterion.artifact_ref,
     criterion.target,
     criterion.unit,
+    criterion.artifact_check ?? null,
   ]);
 const text = (v: unknown, name: string, max = 2000) => {
   if (typeof v !== "string" || !v.trim() || v.length > max)
@@ -92,6 +111,11 @@ function accept(c: Context) {
     throw new AppError("NEEDS_CONFIRMATION", "新承诺需要用户接受", 422);
   return c.source;
 }
+function reminderMode(value: unknown): Habit["reminder_mode"] {
+  if (!["window", "opportunistic", "off"].includes(String(value)))
+    throw new AppError("INVALID_REMINDER_MODE", "习惯提示方式无效");
+  return value as Habit["reminder_mode"];
+}
 function timestamp(value: unknown) {
   const str = text(value, "时间");
   if (
@@ -100,6 +124,22 @@ function timestamp(value: unknown) {
   )
     throw new AppError("INVALID_TIME", "时间必须包含时区");
   return DateTime.fromISO(str).toUTC().toISO()!;
+}
+function reportTime(a:Action,c:Context) {
+  const performed=a.performed_at==null ? null : timestamp(a.performed_at);
+  const date=a.business_date==null ? (performed ? DateTime.fromISO(performed,{zone:c.zone}).toISODate()! : null) : text(a.business_date,"发生日期",10);
+  if(date) day(date);
+  if((performed && performed>c.now) || (date && date>DateTime.fromISO(c.now,{zone:c.zone}).toISODate()!) ||
+    (performed && DateTime.fromISO(performed,{zone:c.zone}).toISODate()!==date))
+    throw new AppError("INVALID_PERFORMED_AT","发生时间须已发生且与日期一致；未知不要猜测");
+  return {performed_at:performed,business_date:date,reported_at:c.now};
+}
+function allowDeadline(t:Task|undefined,end:string,a:Action,c:Context) {
+  if(t?.due_at && end>t.due_at) {
+    if(a.overdue_recovery!==true) throw new AppError("DEADLINE_WINDOW_CONFLICT","执行时段超过硬截止，需要明确选择逾期补救，原截止保持不变");
+    return accept(c);
+  }
+  return undefined;
 }
 function criteria(value: any, verification: "self_report" | "tool") {
   if (!Array.isArray(value) || value.length > 20)
@@ -129,6 +169,15 @@ function criteria(value: any, verification: "self_report" | "tool") {
       (!Number.isFinite(x.target) || x.target < 0 || !x.unit)
     )
       throw new AppError("INVALID_ACCEPTANCE", "数量验收需要目标和单位");
+    if (x.artifact_check !== undefined && (
+      x.kind !== "artifact" || !x.artifact_check ||
+      !["exists_nonempty", "contains_all"].includes(x.artifact_check.kind) ||
+      Object.keys(x.artifact_check).some((k) => !["kind", "terms"].includes(k)) ||
+      (x.artifact_check.kind === "contains_all" && (
+        !Array.isArray(x.artifact_check.terms) || !x.artifact_check.terms.length ||
+        x.artifact_check.terms.length > 20 || x.artifact_check.terms.some((t: unknown) => typeof t !== "string" || !t.trim() || t.length > 500)
+      ))
+    )) throw new AppError("INVALID_ACCEPTANCE", "交付物检查需要明确、可执行的规则");
     return {
       id: criterionId,
       kind: x.kind,
@@ -140,6 +189,7 @@ function criteria(value: any, verification: "self_report" | "tool") {
         x.artifact_ref == null
           ? null
           : text(x.artifact_ref, "交付物路径", 1024),
+      ...(x.artifact_check ? { artifact_check: structuredClone(x.artifact_check) } : {}),
     };
   });
 }
@@ -220,11 +270,20 @@ export function applyActions(
   c: Context,
 ) {
   const ids: string[] = [];
+  // Explicit moves in one commit may temporarily overlap (for example, swapping
+  // two blocks). Validate their final state before the draft can be committed.
+  const moving=new Set(actions.filter(a=>a.type==="reschedule").map(a=>a.target_id));
+  const assistantContext = {
+    ...c,
+    rulesBaseRevision: registry.rules_revision ?? 0,
+  };
   const versions = new Map(
-    [...registry.habits, ...registry.tasks, ...registry.plans].map((item) => [
-      item.id,
-      item.version,
-    ]),
+    [
+      ...registry.habits,
+      ...registry.tasks,
+      ...registry.plans,
+      ...registry.proposals,
+    ].map((item) => [item.id, item.version]),
   );
   const version = (entity: Entity | undefined, action: Action) =>
     checkVersion(entity, action, versions);
@@ -235,7 +294,21 @@ export function applyActions(
     stamp(entity, c);
     ids.push(entity.id);
   };
+  const syncNextAction = (task: Task, patch: any) => {
+    if (typeof patch?.next_action !== "string") return;
+    for (const plan of registry.plans.filter((p) => p.target_ref.id === task.id && ["planned", "active"].includes(p.status))) {
+      plan.next_action = task.planning!.next_action!;
+      touch(plan); // A fixed time does not freeze the user's next-action wording.
+    }
+  };
   for (const a of actions) {
+    const assistantIds =
+      workAction(registry,a,c) ?? ruleAction(registry, a, assistantContext) ??
+      automationAction(registry, a, c);
+    if (assistantIds) {
+      ids.push(...assistantIds);
+      continue;
+    }
     switch (a.type) {
       case "create_habit": {
         const repeat = recurrence(a.recurrence),
@@ -245,12 +318,17 @@ export function applyActions(
           ...base("habit", c),
           title: text(a.title, "习惯名称", 200),
           min_behavior: text(a.min_behavior, "最小行为", 500),
+          minimum_quantity: quantity(a.minimum_quantity),
           optional_target: quantity(a.optional_target),
           status,
           approval: status === "draft" ? null : accept(c),
           note_refs: noteRefs(a.note_refs, c),
           recurrence: repeat,
           anchor: prompt,
+          reminder_mode:
+            a.reminder_mode === undefined
+              ? "opportunistic"
+              : reminderMode(a.reminder_mode),
         };
         registry.habits.push(h);
         ids.push(h.id);
@@ -284,6 +362,17 @@ export function applyActions(
         )
           throw new AppError("INVALID_RELATION", "父任务不存在");
         registry.tasks.push(t);
+        if (a.planning !== undefined)
+          updateTaskPlanning(t, a.planning, registry);
+        if (a.initial_plan && !t.planning)
+          updateTaskPlanning(
+            t,
+            {
+              next_action: (a.initial_plan as any).next_action,
+              remaining_minutes: (a.initial_plan as any).duration_minutes,
+            },
+            registry,
+          );
         ids.push(t.id);
         if (a.initial_plan !== undefined) {
           if (
@@ -304,6 +393,8 @@ export function applyActions(
             ],
             c,
           );
+          if ((a.initial_plan as any).overdue_recovery!==true && t.due_at && registry.plans.some((p) => scheduled.ids.includes(p.id) && p.window_end > t.due_at!))
+            throw new AppError("DEADLINE_WINDOW_CONFLICT", "新任务的执行窗口超过同时设置的硬截止；核对时区或明确调整方案，不能静默修改截止");
           ids.push(...scheduled.ids);
         }
         break;
@@ -321,6 +412,7 @@ export function applyActions(
             h.definition_history.push({
               version: h.version,
               min_behavior: h.min_behavior,
+              minimum_quantity: h.minimum_quantity ?? null,
               effective_until: DateTime.fromISO(c.now, { zone: c.zone })
                 .minus({ days: 1 })
                 .toISODate()!,
@@ -330,8 +422,22 @@ export function applyActions(
         }
         if (a.optional_target !== undefined)
           h.optional_target = quantity(a.optional_target);
+        if (a.minimum_quantity !== undefined) {
+          if (!h.definition_history?.some((x) => x.version === h.version))
+            (h.definition_history ??= []).push({
+              version: h.version,
+              min_behavior: h.min_behavior,
+              minimum_quantity: h.minimum_quantity ?? null,
+              effective_until: DateTime.fromISO(c.now, { zone: c.zone })
+                .minus({ days: 1 })
+                .toISODate()!,
+            });
+          h.minimum_quantity = quantity(a.minimum_quantity);
+        }
         if (a.recurrence !== undefined) h.recurrence = recurrence(a.recurrence);
         if (a.anchor !== undefined) h.anchor = anchor(a.anchor);
+        if (a.reminder_mode !== undefined)
+          h.reminder_mode = reminderMode(a.reminder_mode);
         if (a.note_refs !== undefined) h.note_refs = noteRefs(a.note_refs, c);
         if (a.title !== undefined) h.title = text(a.title, "名称", 200);
         if (a.status !== undefined) {
@@ -344,6 +450,8 @@ export function applyActions(
         break;
       }
       case "update_task": {
+        if (["next_action", "remaining_minutes", "blocker"].some((key) => a[key] !== undefined))
+          throw new AppError("TASK_PLANNING_NESTING", "任务下一步、剩余时长与阻碍须放planning对象，不能静默忽略顶层字段");
         const t = version(
           registry.tasks.find((x) => x.id === a.target_id),
           a,
@@ -427,6 +535,10 @@ export function applyActions(
           }
           t.parent_task_id = parent as string | null;
         }
+        if (a.planning !== undefined) {
+          updateTaskPlanning(t, a.planning, registry);
+          syncNextAction(t, a.planning);
+        }
         if (previous.status === "done" && t.status !== "done")
           c.loadDay(
             DateTime.fromISO(c.now, { zone: c.zone }).toISODate()!,
@@ -446,6 +558,164 @@ export function applyActions(
         touch(t);
         break;
       }
+      case "set_planning": {
+        accept(c);
+        if (
+          !c.planningDefaults ||
+          !a.preferences ||
+          typeof a.preferences !== "object" ||
+          Array.isArray(a.preferences)
+        )
+          throw new AppError("PLANNING_INVALID", "需要计划偏好");
+        const patch = a.preferences as Partial<PlanningSettings>;
+        if (
+          a.expected_planning_version !== undefined &&
+          a.expected_planning_version !== (registry.planning_version ?? 0)
+        )
+          throw new AppError(
+            "VERSION_CONFLICT",
+            "可用时间或计划偏好已在别处更新，请重新读取",
+            409,
+          );
+        if (
+          Object.keys(patch).some((k) => !Object.hasOwn(c.planningDefaults!, k))
+        )
+          throw new AppError("PLANNING_INVALID", "计划偏好包含未知字段");
+        const settings = {
+          ...planningSettings(registry, c.planningDefaults, c.now),
+          ...patch,
+        };
+        validatePlanningSettings(settings);
+        syncPlanningRules(registry, patch, c);
+        registry.planning_version = (registry.planning_version ?? 0) + 1;
+        break;
+      }
+      case "configure_task": {
+        if (["next_action", "remaining_minutes", "blocker"].some((key) => a[key] !== undefined))
+          throw new AppError("TASK_PLANNING_NESTING", "任务下一步、剩余时长与阻碍须放planning对象，不能静默忽略顶层字段");
+        const t = version(
+          registry.tasks.find((x) => x.id === a.target_id),
+          a,
+        ) as Task;
+        accept(c);
+        const oldAction = t.planning?.next_action;
+        updateTaskPlanning(t, a.planning, registry);
+        if (
+          c.source.channel !== "coordinator" &&
+          ((a.planning as any).enabled === true ||
+            (t.planning?.next_action && t.planning.next_action !== oldAction))
+        )
+          t.planning!.postponements = 0;
+        syncNextAction(t, a.planning);
+        if (
+          a.planning &&
+          (a.planning as any).blocker === null &&
+          t.status === "blocked"
+        )
+          t.status = "in_progress";
+        touch(t);
+        break;
+      }
+      case "report_execution": {
+        const occurred=reportTime(a,c);
+        const t = version(
+          registry.tasks.find((x) => x.id === a.target_id),
+          a,
+        ) as Task;
+        if (!t.approval || ["draft", "done", "cancelled"].includes(t.status))
+          throw new AppError("TASK_NOT_ACTIVE", "先明确重新打开任务");
+        if (
+          ![
+            "started",
+            "progress",
+            "not_started",
+            "not_done",
+            "blocked",
+          ].includes(String(a.execution))
+        )
+          throw new AppError(
+            "INVALID_PROGRESS",
+            "需要明确开始、进展、未完成或受阻",
+          );
+        const patch: any = {};
+        if (a.next_action !== undefined) patch.next_action = a.next_action;
+        if (a.remaining_minutes !== undefined)
+          patch.remaining_minutes = a.remaining_minutes;
+        if (a.blocker !== undefined) patch.blocker = a.blocker;
+        updateTaskPlanning(t, patch, registry);
+        const p = taskPlanning(t);
+        p.feedback = a.execution as
+          "started" | "progress" | "not_started" | "not_done" | "blocked";
+        p.feedback_at = c.now;
+        p.execution_history = [
+          ...(p.execution_history ?? []),
+          {
+            at: c.now,
+            performed_at:occurred.performed_at,
+            business_date:occurred.business_date,
+            execution: p.feedback,
+            next_action: p.next_action,
+            source: c.source,
+          },
+        ].slice(-24);
+        if (a.effort_minutes !== undefined) {
+          if (
+            !Number.isInteger(a.effort_minutes) ||
+            Number(a.effort_minutes) < 0 ||
+            Number(a.effort_minutes) > 1440
+          )
+            throw new AppError("INVALID_PROGRESS", "实际投入应为0到1440分钟");
+          p.reported_work_minutes =
+            (p.reported_work_minutes ?? 0) + Number(a.effort_minutes);
+          t.progress.report_source = c.source;
+        }
+        const historic=(occurred.performed_at ? Date.parse(c.now)-Date.parse(occurred.performed_at)>300000 :
+          occurred.business_date && occurred.business_date!==DateTime.fromISO(c.now,{zone:c.zone}).toISODate());
+        p.focus_until = !historic && ["started", "progress"].includes(String(a.execution))
+          ? DateTime.fromISO(c.now)
+              .plus({ minutes: Math.min(p.remaining_minutes ?? 25, 240) })
+              .toUTC()
+              .toISO()
+          : null;
+        if (typeof a.report === "string") {
+          t.progress.last_report = text(a.report, "进展说明", 500);
+          t.progress.report_source = c.source;
+        }
+        t.status =
+          a.execution === "blocked"
+            ? "blocked"
+            : a.execution === "not_started"
+              ? "ready"
+              : "in_progress";
+        const plans = registry.plans.filter(
+          (x) =>
+            x.target_ref.id === t.id &&
+            (occurred.business_date ? x.status!=="cancelled" : ["planned", "active"].includes(x.status)),
+        );
+        const plan = a.plan_id
+          ? plans.find((x) => x.id === a.plan_id)
+          : plans
+              .filter((x) => occurred.performed_at ? x.window_start<=occurred.performed_at && x.window_end>occurred.performed_at :
+                occurred.business_date ? DateTime.fromISO(x.window_start,{zone:c.zone}).toISODate()===occurred.business_date : x.window_start<=c.now)
+              .sort((x, y) => y.window_start.localeCompare(x.window_start))[0];
+        if (a.plan_id && !plan)
+          throw new AppError("ITEM_NOT_FOUND", "安排不属于该任务");
+        if (plan) {
+          plan.execution = p.feedback;
+          plan.execution_at = occurred.performed_at ?? c.now;
+          if (typeof a.next_action === "string")
+            plan.next_action = a.next_action;
+          if (
+            ["not_started", "not_done", "blocked"].includes(String(a.execution))
+          ) {
+            plan.status = "expired";
+            p.focus_until = null;
+          }
+          touch(plan);
+        }
+        touch(t);
+        break;
+      }
       case "report_habit": {
         const h = version(
             registry.habits.find((x) => x.id === a.target_id),
@@ -462,15 +732,42 @@ export function applyActions(
         const d = c.loadDay(date),
           key = h.id + ":" + date + ":default",
           old = d.occurrences.find((x) => x.id === key);
+        const definition = h.definition_history?.find(
+          (x) => date <= x.effective_until,
+        );
+        const minimum =
+          old && "minimum_quantity_snapshot" in old
+            ? old.minimum_quantity_snapshot
+            : definition
+              ? (definition.minimum_quantity ?? null)
+              : (h.minimum_quantity ?? null);
+        const reportedQuantity = quantity(a.quantity);
+        const reportedStatus =
+          a.status === "did" &&
+          minimum &&
+          reportedQuantity &&
+          (reportedQuantity.unit !== minimum.unit ||
+            reportedQuantity.value < minimum.value)
+            ? "partial"
+            : (a.status as any);
+        const performed = a.performed_at == null ? null : timestamp(a.performed_at);
+        if (performed && (
+          !["did", "partial"].includes(reportedStatus) || performed > c.now ||
+          DateTime.fromISO(performed, { zone: c.zone }).toISODate() !== date
+        )) throw new AppError("INVALID_PERFORMED_AT", "实际发生时间须已发生、属于报告日期，且对应已做或部分完成；未知时不要猜测");
+        const nextPerformed = ["did", "partial"].includes(reportedStatus)
+          ? (a.performed_at === undefined ? old?.performed_at ?? null : performed) : null;
         if (old) {
           d.corrections.push({
             id: key,
             old_status: old.status,
-            new_status: String(a.status),
+            new_status: reportedStatus,
+            old_performed_at: old.performed_at ?? null,
+            new_performed_at: nextPerformed,
             source: c.source,
             at: c.now,
           });
-          old.status = a.status as any;
+          old.status = reportedStatus;
           old.quantity = quantity(a.quantity);
           old.optional_target_met =
             typeof a.optional_target_met === "boolean"
@@ -478,6 +775,7 @@ export function applyActions(
               : null;
           old.source = c.source;
           old.reported_at = c.now;
+          old.performed_at = nextPerformed;
           old.operation_id = c.operation;
         } else {
           const definition = h.definition_history?.find(
@@ -489,7 +787,8 @@ export function applyActions(
             slot_key: "default",
             definition_version: definition?.version ?? h.version,
             min_behavior_snapshot: definition?.min_behavior ?? h.min_behavior,
-            status: a.status as any,
+            status: reportedStatus,
+            minimum_quantity_snapshot: minimum,
             quantity: quantity(a.quantity),
             optional_target_met:
               typeof a.optional_target_met === "boolean"
@@ -497,6 +796,7 @@ export function applyActions(
                 : null,
             source: c.source,
             reported_at: c.now,
+            performed_at: nextPerformed,
             operation_id: c.operation,
           });
         }
@@ -621,6 +921,7 @@ export function applyActions(
       }
       case "complete_task":
       case "reopen_task": {
+        const occurred=reportTime(a,c);
         const t = version(
           registry.tasks.find((x) => x.id === a.target_id),
           a,
@@ -629,6 +930,10 @@ export function applyActions(
           throw new AppError("TASK_NOT_ACTIVE", "任务尚未形成有效承诺");
         const previousStatus = t.status,
           previousDoneAt = t.done_at;
+        if (a.report !== undefined) {
+          t.progress.last_report=text(a.report,"完成或更正说明",500);
+          t.progress.report_source=c.source;
+        }
         if (a.type === "complete_task") {
           if (t.status === "cancelled")
             throw new AppError("TASK_NOT_ACTIVE", "任务已取消，先明确重新打开");
@@ -675,17 +980,24 @@ export function applyActions(
           }
           t.status = "done";
           t.done_at = c.now;
+          t.completion_time=occurred;
           t.progress.verification_pending = false;
+          if (t.planning) {
+            t.planning.remaining_minutes = 0;
+            t.planning.focus_until = null;
+            t.planning.blocker = null;
+          }
         } else {
           t.status = "in_progress";
           t.done_at = null;
+          delete t.completion_time;
           t.progress.verification_pending = false;
           for (const p of Object.values(t.progress.criteria))
             p.status = "pending";
         }
         touch(t);
         c.loadDay(
-          DateTime.fromISO(c.now, { zone: c.zone }).toISODate()!,
+          occurred.business_date ?? DateTime.fromISO(c.now, { zone: c.zone }).toISODate()!,
         ).corrections.push({
           id: t.id,
           target_kind: "task",
@@ -718,6 +1030,7 @@ export function applyActions(
               : earliestSlot(registry, a.available_windows, duration, c.now);
         const start = timestamp(slot?.start ?? a.window_start),
           end = timestamp(slot?.end ?? a.window_end);
+        const overdue=allowDeadline(registry.tasks.find(t=>t.id===target.id),end,a,c);
         if (
           end <= start ||
           !Number.isFinite(duration) ||
@@ -726,14 +1039,14 @@ export function applyActions(
             .minutes < duration
         )
           throw new AppError("INVALID_WINDOW", "工作块超出时间窗口");
-        if (
-          registry.plans.some(
-            (p) =>
-              ["planned", "active"].includes(p.status) &&
-              p.window_start < end &&
-              p.window_end > start,
-          )
-        )
+        const hasConflict = registry.plans.some(
+          (p) =>
+            !moving.has(p.id) &&
+            ["planned", "active"].includes(p.status) &&
+            p.window_start < end &&
+            p.window_end > start,
+        );
+        if (hasConflict && a.allow_reflow !== true)
           throw new AppError("SCHEDULE_CONFLICT", "时间与已有安排重叠", 409);
         const kind = registry.habits.some((h) => h.id === target.id)
           ? "habit"
@@ -754,6 +1067,7 @@ export function applyActions(
         )
           throw new AppError("SCHEDULE_CONFLICT", "本次习惯已有安排", 409);
         const p: Plan = {
+          ...(overdue ? {overdue_recovery:overdue} : {}),
           ...base("plan", c),
           target_ref: {
             kind,
@@ -767,39 +1081,93 @@ export function applyActions(
           next_action: text(a.next_action, "下一步"),
           status: "planned",
           approval: accept(c),
+          origin: "user",
+          execution: "unknown",
         };
         registry.plans.push(p);
+        if (hasConflict) {
+          if (!c.planningDefaults)
+            throw new AppError("SCHEDULE_CONFLICT", "时间与已有安排重叠", 409);
+          const changed = reflow(
+            registry,
+            p.id,
+            start,
+            end,
+            c.now,
+            registry.planning_preferences ?? c.planningDefaults,
+            c.zone,
+            c.operation,
+          );
+          ids.push(...changed);
+        }
         ids.push(p.id);
         break;
       }
+      case "plan_day": {
+        accept(c);
+        const date = text(a.business_date, "日期", 10);
+        day(date);
+        const today = DateTime.fromISO(c.now, { zone: c.zone }).toISODate()!;
+        if (
+          date < today ||
+          date >
+            DateTime.fromISO(c.now, { zone: c.zone })
+              .plus({ days: 31 })
+              .toISODate()!
+        )
+          throw new AppError(
+            "INVALID_DATE",
+            "仅整理今天及未来31天的安排，不改历史",
+          );
+        break;
+      }
+      case "reject_proposal": {
+        const p = version(
+          registry.proposals.find((p) => p.id === a.target_id),
+          a,
+        ) as Registry["proposals"][number];
+        p.status = "cancelled";
+        touch(p);
+        break;
+      }
       case "reschedule": {
+        if (a.plan_id !== undefined || registry.tasks.some((t) => t.id === a.target_id) || registry.habits.some((h) => h.id === a.target_id))
+          throw new AppError("PLAN_TARGET_REQUIRED", "改期的target_id和expected_version须对应安排本身，不能使用任务id加plan_id");
         const p = version(
           registry.plans.find((x) => x.id === a.target_id),
           a,
         ) as Plan;
         if (p.kind === "fixed") accept(c);
+        const duration = a.duration_minutes === undefined ? p.duration_minutes : Number(a.duration_minutes);
+        if (!Number.isFinite(duration) || duration <= 0)
+          throw new AppError("INVALID_WINDOW", "工作时长必须大于零");
+        if (a.kind !== undefined && !["fixed", "window", "flexible"].includes(String(a.kind)))
+          throw new AppError("INVALID_WINDOW", "无效安排类型");
+        if (a.kind !== undefined) accept(c);
         const slot =
           a.available_windows === undefined
             ? null
             : earliestSlot(
                 registry,
                 a.available_windows,
-                p.duration_minutes,
+                duration,
                 c.now,
                 p.id,
               );
         const start = timestamp(slot?.start ?? a.window_start),
           end = timestamp(slot?.end ?? a.window_end);
+        const overdue=allowDeadline(registry.tasks.find(t=>t.id===p.target_ref.id),end,a,c);
         if (
           end <= start ||
           DateTime.fromISO(end).diff(DateTime.fromISO(start), "minutes")
-            .minutes < p.duration_minutes
+            .minutes < duration
         )
           throw new AppError("INVALID_WINDOW", "无效工作窗口");
         if (
           registry.plans.some(
             (other) =>
               other.id !== p.id &&
+              !moving.has(other.id) &&
               ["planned", "active"].includes(other.status) &&
               other.window_start < end &&
               other.window_end > start,
@@ -807,7 +1175,23 @@ export function applyActions(
         )
           throw new AppError("SCHEDULE_CONFLICT", "安排重叠", 409);
         p.window_start = start;
+        p.overdue_recovery=overdue;
         p.window_end = end;
+        p.duration_minutes = duration;
+        if (a.kind !== undefined) p.kind = a.kind as Plan["kind"];
+        if (a.next_action !== undefined) p.next_action = text(a.next_action, "下一步", 500);
+        p.needs_replan = false;
+        p.execution = "unknown";
+        const task = registry.tasks.find((x) => x.id === p.target_ref.id);
+        if (task) {
+          task.planning = {
+            ...taskPlanning(task),
+            postponements: taskPlanning(task).postponements + 1,
+            focus_until: null,
+            ...(a.next_action !== undefined ? { next_action: p.next_action } : {}),
+          };
+          touch(task);
+        }
         touch(p);
         break;
       }
@@ -888,6 +1272,14 @@ export function applyActions(
           "不支持此操作：" + a.type,
           422,
         );
+    }
+  }
+  if (moving.size) {
+    const live=registry.plans.filter(p=>["planned","active"].includes(p.status));
+    for (let i=0;i<live.length;i++) for (let j=i+1;j<live.length;j++) {
+      const a=live[i],b=live[j];
+      if ((moving.has(a.id)||moving.has(b.id)) && a.window_start<b.window_end && b.window_start<a.window_end)
+        throw new AppError("SCHEDULE_CONFLICT","整批调整后的安排仍然重叠，未提交",409);
     }
   }
   return {

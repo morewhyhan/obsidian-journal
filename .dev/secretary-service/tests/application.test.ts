@@ -31,6 +31,27 @@ function setup() {
     );
   return { ...h, call };
 }
+it("planning is a real application tool and exposes current versions without modifying facts", async () => {
+  const h = setup();
+  const before = h.store.registry();
+  const result: any = await h.call({
+    operation: "planning",
+    date: "2026-10-24",
+  });
+  expect(result.version).toBe(0);
+  expect(result.date).toBe("2026-10-24");
+  expect(result.preferences.availability).toEqual([]);
+  expect(h.store.registry()).toEqual(before);
+});
+it("F14 filtered rule lookup ends at the matching rules rather than inventing empty pages", async () => {
+  const h = setup();
+  for (let i=0;i<21;i++) await h.run({ type:"set_personal_rule", key:"working.rule_"+i,
+    value:{instruction:"合成规则"+i,task_ids:[],categories:[],purpose:"all"}, expected_rules_revision:h.store.registry().rules_revision??0 });
+  const found:any=await h.call({operation:"rules",query:"working.rule_20"});
+  expect(found.items).toHaveLength(1);expect(found.next_offset).toBeNull();
+  const absent:any=await h.call({operation:"rules",query:"no-such-rule"});
+  expect(absent.items).toEqual([]);expect(absent.next_offset).toBeNull();
+});
 it("application tools use real templates and ensure both natural-month and week-parent chains", async () => {
   const h = setup();
   const result: any = await h.call({
@@ -164,7 +185,7 @@ it("complete business query paginates beyond preloaded context and grants exact 
   const metadata: any = h.store.db
     .prepare("SELECT metadata_json FROM inbox WHERE id='active'")
     .get();
-  expect(JSON.parse(metadata.metadata_json).authorized_objects).toContainEqual({
+  expect(JSON.parse(metadata.metadata_json).observed_refs).toContainEqual({
     id: "habit-extra-44",
     version: 1,
   });
@@ -239,7 +260,7 @@ it("a business object loaded through secretary.state can be updated even outside
       };
     },
   };
-  const input = h.input("后续习惯34已经读过一句，记今天做了");
+  const input = h.input("请从完整记录找到那项习惯，把已读一句记在今天");
   await h.core.receive(input);
   await h.core.processPending();
   await expect.poll(() => h.store.day("2026-10-23").occurrences.length).toBe(1);

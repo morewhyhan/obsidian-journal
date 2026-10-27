@@ -2,9 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { AppError } from "../../packages/contracts/types.js";
-export const hash = (content: string | Buffer) =>
-  "sha256:" + crypto.createHash("sha256").update(content).digest("hex");
-export const id = (prefix: string) => prefix + "_" + crypto.randomUUID();
+export { hash, id, canonicalJson } from "../../packages/shared/identity.js";
 export function atomicWrite(file: string, content: string | Buffer) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const temp = path.join(
@@ -35,25 +33,18 @@ export function atomicWrite(file: string, content: string | Buffer) {
 export function serialize(value: unknown) {
   return JSON.stringify(value, null, 2) + "\n";
 }
-export function canonicalJson(value: unknown): string {
-  if (Array.isArray(value))
-    return "[" + value.map(canonicalJson).join(",") + "]";
-  if (value && typeof value === "object")
-    return (
-      "{" +
-      Object.entries(value)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([key, item]) => JSON.stringify(key) + ":" + canonicalJson(item))
-        .join(",") +
-      "}"
-    );
-  return JSON.stringify(value) ?? "null";
-}
 export class VaultFiles {
   root: string;
   maxDocumentBytes = 2 * 1024 * 1024;
   legacy = new Set<string>();
   legacyRoutes = new Map<string, string>();
+  /**
+   * Installed by Store after the exclusive writer lock is held. Path validation
+   * below cannot sequence with a host-level mount change; the single-writer
+   * deployment is the actual boundary. This guard makes it observable: once the
+   * lock is gone, vault access stops rather than continuing on a stale premise.
+   */
+  writerGuard?: () => boolean;
   constructor(root: string) {
     fs.mkdirSync(root, { recursive: true });
     this.root = fs.realpathSync(root);
@@ -84,6 +75,11 @@ export class VaultFiles {
     relative: string,
     mode: "document" | "attachment" | "internal" = "document",
   ) {
+    return this.resolveChecked(relative,mode);
+  }
+  private resolveChecked(relative:string,mode:"document"|"attachment"|"internal",parents?:Set<string>) {
+    if (this.writerGuard && !this.writerGuard())
+      throw new AppError("INSTANCE_LOCKED", "写锁已失效，文件访问暂停", 503);
     if (
       typeof relative !== "string" ||
       relative.includes("\0") ||
@@ -117,8 +113,11 @@ export class VaultFiles {
     if (!resolved.startsWith(this.root + path.sep))
       throw new AppError("PATH_FORBIDDEN", "路径越界", 403);
     let cur = this.root;
-    for (const p of relative.split("/")) {
+    const segments=relative.split("/");
+    for (const [index,p] of segments.entries()) {
       cur = path.join(cur, p);
+      const directory=index<segments.length-1;
+      if(directory && parents?.has(cur))continue;
       let stat: fs.Stats | undefined;
       try {
         stat = fs.lstatSync(cur);
@@ -131,21 +130,47 @@ export class VaultFiles {
         const real = fs.realpathSync(cur);
         if (!real.startsWith(this.root + path.sep))
           throw new AppError("PATH_FORBIDDEN", "路径越界", 403);
+        if(directory && stat.isDirectory())parents?.add(cur);
       }
     }
     return resolved;
   }
   read(relative: string) {
-    const file = this.resolve(relative);
+    return this.readBytes(relative).toString("utf8");
+  }
+  readBytes(relative:string,mode:"document"|"attachment"|"internal"="document",limit=this.maxDocumentBytes) {
+    return this.readChecked(relative,mode,limit);
+  }
+  private readChecked(relative:string,mode:"document"|"attachment"|"internal",limit:number,parents?:Set<string>) {
+    const file = this.resolveChecked(relative,mode,parents);
     if (!fs.existsSync(file))
       throw new AppError("NOT_FOUND", "笔记不存在", 404);
-    if (fs.statSync(file).size > this.maxDocumentBytes)
+    const fd=fs.openSync(file,fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW??0));
+    try {
+    const stat=fs.fstatSync(fd);
+    if(!stat.isFile() || stat.nlink!==1)throw new AppError("PATH_FORBIDDEN","仅允许独立普通文件",403);
+    if (stat.size > limit)
       throw new AppError(
         "DOCUMENT_TOO_LARGE",
         "笔记超过文本编辑上限，请拆分内容或作为附件保存",
         413,
       );
-    return fs.readFileSync(file, "utf8");
+    return fs.readFileSync(fd);
+    } finally {fs.closeSync(fd);}
+  }
+  /** One synchronous scan under the exclusive-writer deployment boundary.
+   * Parent validation is reused only within this call; every leaf is opened and fstat-checked.
+   * No persistent full-text mirror or cross-request path authorization cache. */
+  search(paths:string[],query:string) {
+    const parents=new Set<string>(),q=query.toLocaleLowerCase();
+    return paths.flatMap(p=>{
+      let body="";
+      try{body=this.readChecked(p,"document",this.maxDocumentBytes,parents).toString("utf8");}
+      catch(e){if(!(e instanceof AppError) || e.code!=="DOCUMENT_TOO_LARGE")throw e;}
+      const at=body.toLocaleLowerCase().indexOf(q);
+      return p.toLocaleLowerCase().includes(q) || at>=0
+        ? [{path:p,snippet:at>=0?body.slice(Math.max(0,at-40),Math.max(0,at-40)+180):""}]:[];
+    });
   }
   list() {
     const paths: string[] = [];

@@ -3,7 +3,13 @@ import path from "node:path";
 import type { Core } from "./core.js";
 import { atomicWrite, hash } from "./files.js";
 import { checkboxActions } from "./journal.js";
+import { identifyPeriod } from "../../packages/calendar/index.js";
+import { visibleLines } from "../../packages/contracts/markdown.js";
 import { AppError } from "../../packages/contracts/types.js";
+import { toolMutation,assertToolSession } from "./tool-effects.js";
+import { checkBackgroundFile } from "./background-grant.js";
+import { recordNote,workspaceStamp,recordWorkspace,advanceOwnReads } from "./read-stamps.js";
+import { requireCapability } from "./policy.js";
 
 export type WorkspaceCall = {
   input_id: string;
@@ -20,12 +26,29 @@ export type WorkspaceCall = {
   offset?: number;
 };
 
+function businessSections(content: string) {
+  let selected = false;
+  return visibleLines(content).flatMap(({text, visible}) => {
+    if (visible && /^# /.test(text)) selected = ["任务", "习惯"].includes(text.slice(2).trim());
+    return selected ? [text.trimEnd()] : [];
+  }).join("\n").trim();
+}
+
 // The Agent chooses operations, not host paths. All I/O remains with the single
 // Core writer and the same path guards used by the editor. No shell exists.
 export async function workspaceCall(core: Core, args: WorkspaceCall) {
+  if (["write", "edit", "rename", "delete"].includes(args.operation))
+    return toolMutation(core, args, () => workspaceOperation(core, args));
+  const stamp=["list","search"].includes(args.operation)?workspaceStamp(core.store,args.operation as "list"|"search",args.path):undefined;
+  const result=await workspaceOperation(core,args);
+  if(stamp)recordWorkspace(core.store,args.input_id,stamp,args.offset);
+  if(args.operation==="read" && args.path && typeof (result as any).hash==="string")recordNote(core.store,args.input_id,args.path,(result as any).hash);
+  return result;
+}
+async function workspaceOperation(core: Core, args: WorkspaceCall) {
   const s = core.store;
   const input = s.db
-    .prepare("SELECT status FROM inbox WHERE id=?")
+    .prepare("SELECT status,channel,metadata_json FROM inbox WHERE id=?")
     .get(args.input_id) as any;
   if (!input || input.status !== "processing")
     throw new AppError(
@@ -34,6 +57,12 @@ export async function workspaceCall(core: Core, args: WorkspaceCall) {
       403,
     );
   const key = args.input_id + ":workspace:" + args.call_id;
+  if (input.channel === "coordinator") checkBackgroundFile(s,args.input_id,args.operation,args.path);
+  if (
+    JSON.parse(input.metadata_json ?? "{}").read_only &&
+    !["list", "search", "read"].includes(args.operation)
+  )
+    throw new AppError("DISCUSSION_ONLY", "本轮只讨论或查询，不修改文件", 403);
   const offset = args.offset ?? 0;
   if (!Number.isInteger(offset) || offset < 0)
     throw new AppError("INVALID_OFFSET", "无效分页位置");
@@ -96,27 +125,7 @@ export async function workspaceCall(core: Core, args: WorkspaceCall) {
     const q = (args.query ?? "").toLocaleLowerCase();
     if (!q || q.length > 200)
       throw new AppError("INVALID_QUERY", "搜索词需为1至200字符");
-    const matches = all.flatMap((p) => {
-      let body = "";
-      try {
-        body = s.files.read(p);
-      } catch (e) {
-        if (!(e instanceof AppError) || e.code !== "DOCUMENT_TOO_LARGE")
-          throw e;
-      }
-      const at = body.toLocaleLowerCase().indexOf(q);
-      return p.toLocaleLowerCase().includes(q) || at >= 0
-        ? [
-            {
-              path: p,
-              snippet:
-                at >= 0
-                  ? body.slice(Math.max(0, at - 40), Math.max(0, at - 40) + 180)
-                  : "",
-            },
-          ]
-        : [];
-    });
+    const matches = s.files.search(all,q);
     return {
       results: matches.slice(offset, offset + 20),
       total: matches.length,
@@ -158,10 +167,14 @@ export async function workspaceCall(core: Core, args: WorkspaceCall) {
       if (Buffer.byteLength(args.content) > s.config.web.max_document_bytes)
         throw new AppError("DOCUMENT_TOO_LARGE", "笔记过大", 413);
       return s.exclusive(() => {
+        assertToolSession(s,args);
+        requireCapability(s,input.channel==="coordinator"?"background_write":"business_write");
+        if(input.channel==="coordinator")checkBackgroundFile(s,args.input_id,args.operation,args.path);
         // Recheck after the writer lock: an intervening Web create wins.
         if (fs.existsSync(file))
           throw new AppError("PATH_EXISTS", "目标文件已存在，请先读取", 409);
         atomicWrite(file, args.content!);
+        advanceOwnReads(s,args.input_id);
         core.emit("document_changed", { path: args.path });
         return { path: args.path, hash: hash(args.content!), written: true };
       });
@@ -188,6 +201,9 @@ export async function workspaceCall(core: Core, args: WorkspaceCall) {
     }
     if (typeof content !== "string")
       throw new AppError("INVALID_CONTENT", "缺少笔记正文");
+    if (identifyPeriod(args.path)?.kind === "daily" &&
+      businessSections(current.content) !== businessSections(content))
+      throw new AppError("BUSINESS_TOOL_REQUIRED", "任务和习惯须通过业务动作保存，由Core投影；日记其他正文仍可编辑", 403);
     if (checkboxActions(s, args.path, current.content, content).length)
       throw new AppError(
         "BUSINESS_TOOL_REQUIRED",
@@ -199,10 +215,14 @@ export async function workspaceCall(core: Core, args: WorkspaceCall) {
       args.base_hash!,
       content,
       key,
+      ()=>assertToolSession(s,args),
+      ()=>advanceOwnReads(s,args.input_id),
     );
     return { path: result.path, hash: result.hash, written: true };
   }
   return s.exclusive(() => {
+    assertToolSession(s,args);
+    requireCapability(s,"business_write");
     if (args.operation === "rename") {
       if (!args.new_path) throw new AppError("INVALID_PATH", "需要新路径");
       const result = core.documents.rename(
@@ -211,6 +231,7 @@ export async function workspaceCall(core: Core, args: WorkspaceCall) {
         args.base_hash!,
         key,
       );
+      recordNote(s,args.input_id,args.path!,"missing");advanceOwnReads(s,args.input_id);
       core.emit("document_changed", {
         path: args.path,
         renamed_to: result.path,
@@ -224,6 +245,7 @@ export async function workspaceCall(core: Core, args: WorkspaceCall) {
     }
     if (args.operation === "delete") {
       const result = core.documents.delete(args.path!, args.base_hash!, key);
+      recordNote(s,args.input_id,args.path!,"missing");advanceOwnReads(s,args.input_id);
       core.emit("document_changed", { path: args.path, deleted: true });
       return result;
     }

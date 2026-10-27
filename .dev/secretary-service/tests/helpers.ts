@@ -70,6 +70,7 @@ export const habitAction: Action = {
   optional_target: { value: 1, unit: "章" },
   recurrence: { weekdays: [1, 2, 3, 4, 5, 6, 7], starts_on: "2026-01-01" },
   anchor: { kind: "time_window", local_start: "20:00", local_end: "23:00" },
+  reminder_mode: "window",
 };
 export const taskAction: Action = {
   type: "create_task",

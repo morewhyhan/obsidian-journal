@@ -7,3 +7,5 @@ coverage/
 .env
 *.sqlite*
 *.log
+__pycache__/
+*.py[cod]

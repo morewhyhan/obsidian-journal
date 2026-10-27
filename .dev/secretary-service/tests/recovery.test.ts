@@ -24,6 +24,41 @@ function setup() {
   cleanup.push(() => h.close());
   return h;
 }
+it("reordered optional state fields remain recoverable after an interrupted patch", async () => {
+  const h = setup();
+  h.store.commit("old-order", "test", "test", (_r, load) => {
+    load("2026-10-24").assistance = {
+      status: "running",
+      revision: 1,
+      attempts: 1,
+    };
+    return { ids: [], message: "fixture" };
+  });
+  h.store.fault = (stage) => {
+    if (stage === "prepared") throw new Error("power loss");
+  };
+  expect(() =>
+    h.store.commit("new-order", "test", "test", (_r, load) => {
+      load("2026-10-24").assistance = {
+        status: "failed",
+        attempts: 1,
+        revision: 1,
+        error: "offline",
+      };
+      return { ids: [], message: "fixture" };
+    }),
+  ).toThrow("power loss");
+  h.store.fault = undefined;
+  await h.restart();
+  expect(h.store.day("2026-10-24").assistance?.status).toBe("failed");
+  expect(
+    h.store.db
+      .prepare(
+        "SELECT count(*) n FROM events WHERE status='prepared' AND kind='business'",
+      )
+      .get(),
+  ).toMatchObject({ n: 0 });
+});
 it("B05 restore from an isolated backup retains exact Markdown and long-lived facts without replaying old messages", async () => {
   const h = setup(),
     habit = await h.run(habitAction);

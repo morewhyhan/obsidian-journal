@@ -22,12 +22,33 @@ import { atomicWrite, hash, id, canonicalJson } from "./files.js";
 import { Store } from "./store.js";
 import { DocumentOperations } from "./document-operations.js";
 import { applicationCapabilities } from "./application.js";
+import { Coordinator } from "./coordinator.js";
+import { AssistantRuntime } from "./assistant.js";
+import { policyStamp } from "./tool-effects.js";
+import { reconcileWork } from "./work-checks.js";
+import { requireCapability } from "./policy.js";
+import { advanceOwnReads } from "./read-stamps.js";
+import {workInputSchema} from "../../packages/contracts/work.js";
+import { advanceOwnGrant,checkBackgroundActions } from "./background-grant.js";
+import { quietHours } from "../../packages/domain/assistant.js";
+import { processNativeInput, nativeSession } from "./agent-runtime.js";
+import { selectedProposalActions, decideProposal } from "../../packages/domain/decisions.js";
+import {
+  discussionOnly,
+  proposalRequested,
+  confirmation,
+  requestActionTypes,
+  explicitCommitment,
+  literalReportText,
+} from "./conversation.js";
 import {
   bind,
   checkboxActions,
   createPeriod,
   project,
   prepareAutomaticBindings,
+  patchFocus,
+  focusHeadings,
 } from "./journal.js";
 export type AgentResult = {
   action_groups: { action_identity: string; actions: Action[] }[];
@@ -35,27 +56,15 @@ export type AgentResult = {
   reply_intent: string;
   summary?: string;
   discussion?: string;
+  language_review?: string;
 };
 export interface AgentAdapter {
+  executionMode?: "tools-v2";
   interpret(input: Input, context: unknown): Promise<AgentResult>;
   compose?(facts: unknown): Promise<{ text: string }>;
   close?(): void;
 }
 
-function explicitCommitment(text: string) {
-  // Natural-language commands that mean "do it now". Keep hypothetical and
-  // exploratory wording out so a discussion does not create a commitment.
-  const command =
-    /(?:提醒我|帮我(?:安排|记录|记下|创建|新增|新建|设置|设定|定个|定一条)|请(?:安排|记录|记下|创建|新增|新建|设置|设定)|^(?:记住|创建|新增|新建|设置|设定|安排|提醒|定时|定个|取消|改成|改到))/u.test(
-      text.trim(),
-    );
-  return (
-    command &&
-    !/(?:要不要|是否|是不是|该不该|考虑|也许|可能|不想|不要|不需要|如果|假如|比方说|比如|我打算|我想|我准备|能不能|可以吗)/u.test(
-      text,
-    )
-  );
-}
 
 function quietAt(value: DateTime, config: Store["config"]) {
   const time = value.setZone(config.timezone).toFormat("HH:mm"),
@@ -99,11 +108,20 @@ function entirelyQuiet(start: string, end: string, config: Store["config"]) {
 }
 
 export class Core {
+  assistant: AssistantRuntime;
+  coordinator: Coordinator;
   documents: DocumentOperations;
   subscribers = new Set<(event: { type: string; data: unknown }) => void>();
   agent?: AgentAdapter;
   summaryError: string | null = null;
   private processing = false;
+  private foregroundStreak=0;
+  operationKey(input:Input,actions:Action[],identity:string) {
+    const literal=literalReportText(input.text);
+    const normalized=literal !== null && actions.length === 1 && actions[0].type === "report_automation"
+      ? [{...actions[0],report:literal}] : actions;
+    return input.id+":"+hash(canonicalJson(normalized))+(identity.startsWith("native-group:") ? ":"+hash(identity) : "");
+  }
   private stopping = false;
   private idle: Promise<void> = Promise.resolve();
   private releaseIdle?: () => void;
@@ -112,7 +130,43 @@ export class Core {
   }
   constructor(public store: Store) {
     this.documents = new DocumentOperations(store);
+    this.coordinator = new Coordinator(this);
+    this.assistant = new AssistantRuntime(this);
     this.recoverPending();
+    this.recoverInterruptedInputs();
+  }
+  inputEffects(inputId: string) {
+    const events = this.store.db.prepare(
+      "SELECT kind,status,payload_json FROM events WHERE input_id=? AND kind IN ('business','tool_effect') ORDER BY rowid",
+    ).all(inputId) as any[];
+    const applied = events.filter((e) => e.status === "applied").flatMap((e) => {
+      const p = JSON.parse(e.payload_json);
+      return e.kind === "business"
+        ? p.result?.updated_ids?.length ? [p.result.message || "业务记录已保存"] : []
+        : [(({write:"笔记写入",edit:"笔记更新",rename:"笔记改名",delete:"笔记移入回收站",
+            create_period:p.result?.existing ? "确认已有周期笔记" : "按模板创建周期笔记",
+            restore_note:"恢复笔记",restore_version:"恢复笔记版本"} as Record<string,string>)[p.operation] ?? "笔记操作")
+            + (p.path ? "：" + p.path : "") + (p.result?.warnings?.length ? "；"+p.result.warnings.slice(0,3).join("；") : "")];
+    });
+    const uncertain = events.some((e) => e.kind === "tool_effect" && ["prepared", "failed"].includes(e.status));
+    return { applied, uncertain };
+  }
+  private recoverInterruptedInputs() {
+    const rows = this.store.db.prepare(
+      "SELECT * FROM inbox WHERE status='pending' AND channel<>'coordinator' AND json_extract(metadata_json,'$.interrupted')=1",
+    ).all() as any[];
+    for (const row of rows) {
+      if (JSON.parse(row.metadata_json).agent_execution === "tools-v2") continue;
+      const effects = this.inputEffects(row.id);
+      const text = effects.applied.length || effects.uncertain
+        ? "上次处理被中断，未重放操作。" +
+          (effects.applied.length ? "已保存：" + effects.applied.join("；") + "。" : "") +
+          (effects.uncertain ? "有文件操作未取得最终回执，需要检查当前文件；其余部分未继续执行。" : "其余部分未继续执行。")
+        : "上次处理被中断，尚无已保存的业务变更；原安排保留。";
+      this.store.db.prepare("UPDATE inbox SET status='failed',processed_at=?,error_code='INPUT_INTERRUPTED',metadata_json=json_set(metadata_json,'$.reply',?) WHERE id=?")
+        .run(this.store.now(), text, row.id);
+      if (row.channel === "qq") this.queueReply({ ...row, actor_ref: row.actor_ref } as Input, text);
+    }
   }
   recoverPending() {
     const store = this.store;
@@ -144,6 +198,7 @@ export class Core {
         );
     }
     this.flushProjections();
+    this.flushPeriodProjections();
     if (unprojected.length)
       this.emit("item_changed", {
         ids: [
@@ -218,11 +273,14 @@ export class Core {
     }
   }
   source(input: Input): Source {
+    const receipt = this.store.db
+      .prepare("SELECT received_at FROM inbox WHERE id=?")
+      .get(input.id) as { received_at: string } | undefined;
     return {
       input_id: input.id,
       channel: input.channel,
       external_id: input.external_id,
-      accepted_at: this.store.now(),
+      accepted_at: receipt?.received_at ?? this.store.now(),
       summary: input.text.slice(0, 250),
     };
   }
@@ -231,30 +289,46 @@ export class Core {
     actions: Action[],
     identity: string,
     authorized = true,
+    logicalGroups: import("../../packages/contracts/types.js").OperationGroupRef[] = [],
+    authorize?:()=>unknown,
   ): Promise<Execution> {
-    const identities = actions
-      .map((a) =>
-        [
-          a.type,
-          a.target_id ?? a.title ?? "",
-          a.business_date ?? "",
-          a.criterion_id ?? "",
-          a.path ?? "",
-        ].join(":"),
-      )
-      .sort()
-      .join("|");
+    const literal = literalReportText(input.text);
+    if (literal !== null && actions.length === 1 && actions[0].type === "report_automation")
+      actions = actions.map((a) => a.type === "report_automation" ? { ...a, report: literal } : a);
+    // Identity covers every field and the action order. A title/type alone
+    // cannot distinguish two legitimate operations in the same message.
+    const executionKey = this.operationKey(input,actions,identity);
     return this.store.exclusive(() => {
+      requireCapability(this.store,input.channel==="coordinator"?"background_write":"business_write");
+      authorize?.();
+      const run = this.store.db.prepare("SELECT metadata_json FROM inbox WHERE id=?").get(input.id) as any;
+      if (run && JSON.parse(run.metadata_json).agent_execution === "tools-v2") nativeSession(this, input.id, true);
+      if(input.channel==="coordinator" && run && JSON.parse(run.metadata_json).background_grant)checkBackgroundActions(this.store,input.id,actions);
       this.recoverPending();
       const verified = new Map<string, Source>();
       const verificationActions = actions.flatMap((action) =>
         action.type === "accept_proposal"
-          ? (this.store
-              .registry()
-              .proposals.find((p) => p.id === action.target_id)?.actions ?? [])
+          ? (() => { const p = this.store.registry().proposals.find(p => p.id === action.target_id);
+              return p ? selectedProposalActions(action, p).selected : []; })()
           : [action],
       );
       for (const action of verificationActions) {
+        if(action.type==="save_work") {
+          const parsed=workInputSchema.safeParse(action.work);
+          if(!parsed.success)throw new AppError("WORK_INVALID","工作引用或完成条件无效");
+          for(const ref of parsed.data.refs??[])if(ref.kind==="note" && ref.path)this.store.files.resolve(ref.path);
+        }
+        if(action.type==="control_work" && action.control==="complete" && input.channel!=="coordinator" && authorized) {
+          const f=this.store.registry().followups?.find(f=>f.id===action.target_id),w=f?.work;
+          if(w?.done_when?.kind==="user_confirmed") {
+            const resultPath=w.done_when.path;
+            const ref=w.refs?.find(ref=>ref.path===resultPath && ref.role==="output");
+            if(ref?.path && ref.hash)try {
+              const actual=hash(this.store.files.read(ref.path));
+              if(ref.hash===actual)verified.set("work:"+f!.id+":"+w.step_id,{...this.source(input),external_id:actual});
+            }catch{/* A missing or changed preparation cannot be confirmed as the old result. */}
+          }
+        }
         if (action.type !== "complete_task") continue;
         const task = this.store
           .registry()
@@ -263,36 +337,36 @@ export class Core {
           if (
             criterion.verification !== "tool" ||
             criterion.kind !== "artifact" ||
-            !criterion.artifact_ref
+            !criterion.artifact_ref ||
+            !criterion.artifact_check
           )
             continue;
           try {
-            const file = this.store.files.resolve(
+            const bytes = this.store.files.readBytes(
               criterion.artifact_ref,
               criterion.artifact_ref.startsWith("Attachment/")
                 ? "attachment"
                 : "document",
+              this.store.config.web.max_attachment_bytes,
             );
-            const stat = fs.statSync(file);
-            if (
-              stat.isFile() &&
-              stat.size > 0 &&
-              stat.size <= this.store.config.web.max_attachment_bytes
-            )
+            if (bytes.length>0) {
+              if (criterion.artifact_check.kind === "contains_all" &&
+                !criterion.artifact_check.terms.every((term) => bytes.toString("utf8").includes(term))) continue;
               verified.set(verificationKey(task!.id, criterion), {
                 input_id: input.id,
-                channel: "tool:artifact_exists",
-                external_id: hash(fs.readFileSync(file)),
+                channel: "tool:artifact_check",
+                external_id: hash(bytes),
                 accepted_at: this.store.now(),
-                summary: "已核验库内交付物存在且非空",
+                summary: criterion.artifact_check.kind === "exists_nonempty" ? "仅核验约定文件存在且非空" : "已核验约定文件包含全部指定文本",
               });
+            }
           } catch {
             /* Only the registered workspace artifact checker can grant verification. */
           }
         }
       }
       const result = this.store.commit(
-        input.id + ":" + hash(identities),
+        executionKey,
         input.channel,
         input.id,
         (registry, loadDay, operation, rememberFact) => {
@@ -307,12 +381,22 @@ export class Core {
             userAuthorized: authorized,
             rememberFact,
             verified,
+            planningDefaults: this.store.config.planning,
+            quietDefaults: this.store.config.notifications.quiet_hours,
             validateNoteRef: (relative: string) => {
               this.store.files.read(relative);
             },
           };
           const acceptedProposals: string[] = [];
-          const effective = actions.flatMap((action) => {
+          const expanded = actions.flatMap((action) => {
+            if (["reject_proposal","defer_proposal"].includes(action.type)) {
+              const proposal = registry.proposals.find(p => p.id === action.target_id);
+              if (!proposal || proposal.version !== action.expected_version || proposal.status !== "pending" || proposal.expires_at <= this.store.now())
+                throw new AppError("PROPOSAL_EXPIRED", "建议已变化或过期", 409);
+              decideProposal(proposal, action, context);
+              acceptedProposals.push(proposal.id);
+              return [];
+            }
             if (action.type !== "accept_proposal") return [action];
             const proposal = registry.proposals.find(
               (p) => p.id === action.target_id,
@@ -324,14 +408,28 @@ export class Core {
               proposal.expires_at <= this.store.now()
             )
               throw new AppError("PROPOSAL_EXPIRED", "建议已变化或过期", 409);
-            if (proposal.actions.some((a) => a.type === "accept_proposal"))
+            const selection = decideProposal(proposal, action, context);
+            if (selection.selected.some((a) => ["accept_proposal", "reject_proposal", "link_diary", "project_diary", "pending_diary_binding"].includes(a.type)))
               throw new AppError("AGENT_INVALID", "不允许嵌套接受提案");
-            proposal.status = "accepted";
-            proposal.version++;
-            proposal.last_operation_id = operation;
             acceptedProposals.push(proposal.id);
-            return proposal.actions;
+            return selection.selected;
           });
+          const seen = new Set<string>();
+          const effective =
+            acceptedProposals.length > 1
+              ? expanded.filter((a) => {
+                  const key = canonicalJson(a);
+                  if (seen.has(key)) return false;
+                  seen.add(key);
+                  return true;
+                })
+              : expanded;
+          if (effective.length > 20)
+            throw new AppError(
+              "BATCH_TOO_LARGE",
+              "合并后超过单次20项，整批未执行；需要先缩小这批建议",
+              422,
+            );
           const baseVersions = new Map(
             [...registry.habits, ...registry.tasks].map((item) => [
               item.id,
@@ -339,9 +437,48 @@ export class Core {
             ]),
           );
           const ordinary = effective.filter(
-            (a) => !["link_diary", "project_diary"].includes(a.type),
+            (a) =>
+              !["link_diary", "project_diary", "set_period_focus"].includes(
+                a.type,
+              ),
           );
           const output = applyActions(registry, ordinary, context);
+          if (!acceptedProposals.length)
+            for (const p of registry.proposals) {
+              if (
+                p.status === "pending" &&
+                canonicalJson(p.actions) === canonicalJson(effective)
+              ) {
+                p.status = "cancelled";
+                p.version++;
+                p.updated_at = this.store.now();
+                p.last_operation_id = operation;
+              }
+            }
+          const coordinated = this.coordinator.afterActions(
+            registry,
+            loadDay,
+            operation,
+            context.source,
+            ordinary.map((a) => {
+              const key =
+                a.type === "set_personal_rule"
+                  ? String(a.key)
+                  : ["control_rule", "undo_rule"].includes(a.type)
+                    ? registry.user_rules?.find((x) => x.id === a.target_id)
+                        ?.key
+                    : null;
+              return key?.startsWith("planning.")
+                ? {
+                    type: "set_planning",
+                    preferences: { [key.slice(9)]: null },
+                  }
+                : a;
+            }),
+          );
+          output.ids.push(...coordinated.ids);
+          if (coordinated.message)
+            output.message += " " + coordinated.message + "。";
           for (const action of effective.filter(
             (a) => a.type === "project_diary",
           )) {
@@ -399,8 +536,53 @@ export class Core {
             );
             output.ids.push(link.target_ref.id);
           }
-          return output;
+          const periods = effective
+            .filter((a) => a.type === "set_period_focus")
+            .map((a) => {
+              if (!authorized)
+                throw new AppError(
+                  "NEEDS_CONFIRMATION",
+                  "重点变更需要明确接受",
+                );
+              if (
+                !["yearly", "quarterly", "monthly", "weekly"].includes(
+                  String(a.kind),
+                ) ||
+                typeof a.content !== "string" ||
+                !a.content.trim() ||
+                a.content.length > 2000
+              )
+                throw new AppError("INVALID_FIELD", "需要明确周期与简短重点");
+              const kind = a.kind as Period,
+                date = String(a.business_date),
+                p = createPeriod(this.store, kind, date).path,
+                raw = this.store.files.read(p);
+              if (hash(raw) !== a.base_hash)
+                throw new AppError(
+                  "VERSION_CONFLICT",
+                  "周期笔记已变化，保留原文",
+                  409,
+                );
+              return {
+                path: p,
+                heading: focusHeadings[kind],
+                base_hash: hash(raw),
+                target_hash: hash(
+                  patchFocus(
+                    raw,
+                    focusHeadings[kind],
+                    a.content,
+                    a.replace_section === true,
+                  ),
+                ),
+                content: a.content,
+                replace: a.replace_section === true,
+              };
+            });
+          output.ids.push(...reconcileWork(this.store,registry,operation,context.source));
+          return periods.length ? { ...output, effects: { periods } } : output;
         },
+        logicalGroups,
       );
       this.store.db.transaction(() => {
         const eventId = result.operation_id + ":projection";
@@ -420,29 +602,107 @@ export class Core {
           );
       })();
       this.flushProjections();
+      this.flushPeriodProjections();
+      const projectionWarnings: string[] = [];
+      for (const a of actions.filter((x) => x.type === "report_automation"))
+        this.assistant.queueReportDate(String(a.business_date));
+      if (
+        this.store.db
+          .prepare(
+            "SELECT 1 FROM events WHERE parent_id=? AND kind='period_projection' AND status='conflict'",
+          )
+          .get(result.operation_id)
+      )
+        projectionWarnings.push("周期重点尚未写入，原文已保留。");
       this.cancelInvalidContact();
+      const nativeDates = new Set<string>();
+      if (run && JSON.parse(run.metadata_json).agent_execution === "tools-v2") {
+        const updated = new Set(result.updated_ids);
+        for (const plan of this.store.registry().plans)
+          if (["planned", "active"].includes(plan.status) && plan.window_end > this.store.now() &&
+            (updated.has(plan.id) || updated.has(plan.target_ref.id)))
+            nativeDates.add(DateTime.fromISO(plan.window_start).setZone(this.store.config.timezone).toISODate()!);
+        for (const action of verificationActions) {
+          if (action.type === "report_habit" && typeof action.business_date === "string") nativeDates.add(action.business_date);
+          if (["create_habit", "update_habit"].includes(action.type))
+            nativeDates.add(localDate(this.store.clock(), this.store.config.timezone));
+        }
+      }
+      for (const date of new Set([
+        ...nativeDates,
+        ...verificationActions
+          .filter((a) => a.type === "plan_day")
+          .map((a) => String(a.business_date)),
+        DateTime.fromJSDate(this.store.clock(), {
+          zone: this.store.config.timezone,
+        })
+          .plus({ days: 1 })
+          .toISODate()!,
+      ])) {
+        try {
+          this.coordinator.ensureDiary(date, nativeDates.has(date));
+        } catch {
+          projectionWarnings.push("安排已保存，模板笔记创建或绑定尚未成功，请检查模板。");
+        }
+      }
       this.rebuildSummary();
       this.emit("item_changed", { ids: result.updated_ids });
+      if (
+        actions.some((a) =>
+          [
+            "set_personal_rule",
+            "control_rule",
+            "undo_rule",
+            "create_automation",
+            "update_automation",
+            "control_automation",
+            "report_automation",
+            "start_focus",
+            "pause_focus",
+            "resume_focus",
+            "stop_focus",
+          ].includes(a.type),
+        )
+      )
+        result.message = this.assistant.receipt(actions, result.updated_ids);
+      if (projectionWarnings.length) result.message += " " + projectionWarnings.join(" ");
+      const projectionRows = this.store.db.prepare(
+        "SELECT status FROM events WHERE (parent_id=? OR dedupe_key=?) AND kind IN ('diary_projection','period_projection')",
+      ).all(result.operation_id, result.operation_id + ":projection") as {status:string}[];
+      result.projection = {
+        status: projectionWarnings.length || projectionRows.some(r=>r.status === "conflict") ? "conflict"
+          : projectionRows.some(r=>r.status === "prepared") ? "pending" : "applied",
+        warnings:projectionWarnings,
+      };
       if (this.store.config.notifications.respect_quiet_hours_for_deadlines) {
+        const config = {
+          ...this.store.config,
+          notifications: {
+            ...this.store.config.notifications,
+            quiet_hours: quietHours(
+              this.store.registry(),
+              this.store.config.notifications.quiet_hours,
+              this.store.now(),
+            ),
+          },
+        };
         const quietPlan = this.store
           .registry()
           .plans.find(
             (plan) =>
               result.updated_ids.includes(plan.id) &&
-              entirelyQuiet(
-                plan.window_start,
-                plan.window_end,
-                this.store.config,
-              ),
+              entirelyQuiet(plan.window_start, plan.window_end, config),
           );
         if (quietPlan)
           result.message +=
             " 安排落在静默时段（" +
-            this.store.config.notifications.quiet_hours.start +
+            config.notifications.quiet_hours.start +
             "–" +
-            this.store.config.notifications.quiet_hours.end +
+            config.notifications.quiet_hours.end +
             "），按当前规则不会在该窗口发送提醒。";
       }
+      if(run && JSON.parse(run.metadata_json).agent_execution==="tools-v2")advanceOwnReads(this.store,input.id);
+      if(input.channel==="coordinator")advanceOwnGrant(this.store,input.id,result.updated_ids);
       return result;
     });
   }
@@ -478,40 +738,133 @@ export class Core {
       }
     }
   }
-  private cancelInvalidContact() {
+  private flushPeriodProjections() {
+    const s = this.store;
+    for (const event of s.db
+      .prepare(
+        "SELECT id,input_id,payload_json FROM events WHERE kind='business' AND status='applied' AND json_array_length(payload_json,'$.result.effects.periods')>0",
+      )
+      .all() as any[]) {
+      const periods = JSON.parse(event.payload_json).result.effects
+        .periods as any[];
+      for (const [i, p] of periods.entries()) {
+        const key = event.id + ":period:" + i;
+        s.db
+          .prepare(
+            "INSERT OR IGNORE INTO events(id,dedupe_key,input_id,parent_id,source,kind,payload_json,created_at) VALUES(?,?,?,?,?,?,?,?)",
+          )
+          .run(
+            key,
+            key,
+            event.input_id,
+            event.id,
+            "core",
+            "period_projection",
+            JSON.stringify(p),
+            s.now(),
+          );
+      }
+    }
+    for (const row of s.db
+      .prepare(
+        "SELECT id,payload_json FROM events WHERE kind='period_projection' AND status='prepared'",
+      )
+      .all() as any[]) {
+      try {
+        const p = JSON.parse(row.payload_json),
+          raw = s.files.read(p.path),
+          current = hash(raw);
+        if (current === p.base_hash) {
+          const updated = patchFocus(raw, p.heading, p.content, p.replace);
+          if (hash(updated) !== p.target_hash)
+            throw new Error("Projection mismatch");
+          atomicWrite(s.files.resolve(p.path), updated);
+          s.index(p.path);
+          this.emit("document_changed", { path: p.path });
+        } else if (current !== p.target_hash)
+          throw new Error("Projection conflict");
+        s.db
+          .prepare(
+            "UPDATE events SET status='applied',completed_at=? WHERE id=?",
+          )
+          .run(s.now(), row.id);
+      } catch {
+        s.db
+          .prepare(
+            "UPDATE events SET status='conflict',error_code='PROJECTION_CONFLICT' WHERE id=?",
+          )
+          .run(row.id);
+      }
+    }
+  }
+  cancelInvalidContact() {
     const registry = this.store.registry(),
       now = this.store.now();
     const rows = this.store.db
       .prepare(
-        "SELECT id,target_refs_json FROM outbox WHERE counts_as_proactive=1 AND status IN ('pending','failed')",
+        "SELECT id,target_refs_json,source_versions_json FROM outbox WHERE counts_as_proactive=1 AND status IN ('pending','failed')",
       )
       .all() as any[];
     for (const row of rows) {
       const refs = JSON.parse(row.target_refs_json) as any[];
-      const invalid = refs.some((ref) => {
-        const target =
-          ref.kind === "habit"
-            ? registry.habits.find((h) => h.id === ref.id)
-            : registry.tasks.find((t) => t.id === ref.id);
-        return (
-          !target ||
-          !["active", "ready", "in_progress", "blocked"].includes(
-            target.status,
-          ) ||
-          registry.controls.some(
-            (p) =>
-              p.starts_at <= now &&
-              p.ends_at > now &&
-              (p.scope === "global" || p.target_id === ref.id),
-          ) ||
-          (ref.kind === "habit" &&
-            this.store
-              .day(ref.business_date)
-              .occurrences.some(
-                (o) => o.habit_id === ref.id && o.status !== "unreported",
-              ))
-        );
-      });
+      const versions = JSON.parse(row.source_versions_json);
+      const changedPlan = registry.plans.some(
+        (p) => versions[p.id] !== undefined && versions[p.id] !== p.version,
+      );
+      const invalid =
+        changedPlan ||
+        refs.some((ref) => {
+          if(ref.kind==="work") {
+            const f=registry.followups?.find(f=>f.id===ref.id);
+            return !f?.work || f.status!=="waiting_user" || registry.controls.some(c=>c.starts_at<=now && c.ends_at>now &&
+              (c.scope==="global"||c.target_id===f.id||f.work!.refs?.some(r=>r.id===c.target_id)));
+          }
+          if(ref.kind==="planning")return !this.coordinator.notices().some(n=>n.id===ref.id);
+          if (ref.kind === "proposal") {
+            const proposal = registry.proposals.find((p) => p.id === ref.id);
+            return (
+              !proposal ||
+              proposal.status !== "pending" ||
+              proposal.expires_at <= now
+            );
+          }
+          if (["automation", "focus"].includes(ref.kind)) {
+            const e =
+              ref.kind === "automation"
+                ? registry.automations?.find((a) => a.id === ref.id)
+                : this.assistant.view().focus;
+            return (
+              !e ||
+              versions[ref.id] !== e.version ||
+              registry.controls.some(
+                (c) =>
+                  c.starts_at <= now &&
+                  c.ends_at > now &&
+                  (c.scope === "global" || c.target_id === ref.id),
+              )
+            );
+          }
+          const target =
+            ref.kind === "habit"
+              ? registry.habits.find((h) => h.id === ref.id)
+              : registry.tasks.find((t) => t.id === ref.id);
+          return (
+            !target ||
+            !["active", "ready", "in_progress"].includes(target.status) ||
+            registry.controls.some(
+              (p) =>
+                p.starts_at <= now &&
+                p.ends_at > now &&
+                (p.scope === "global" || p.target_id === ref.id),
+            ) ||
+            (ref.kind === "habit" &&
+              this.store
+                .day(ref.business_date)
+                .occurrences.some(
+                  (o) => o.habit_id === ref.id && o.status !== "unreported",
+                ))
+          );
+        });
       if (invalid)
         this.store.db
           .prepare(
@@ -592,8 +945,12 @@ export class Core {
     baseHash: string,
     content: string,
     requestId: string,
+    authorize?:()=>void,
+    afterWrite?:()=>void,
   ) {
     return this.store.exclusive(() => {
+      requireCapability(this.store,"business_write");
+      authorize?.();
       if (Buffer.byteLength(content) > this.store.config.web.max_document_bytes)
         throw new AppError("DOCUMENT_TOO_LARGE", "笔记过大", 413);
       const newHash = hash(content),
@@ -764,6 +1121,7 @@ export class Core {
         version: next.version,
         request_id: requestId,
       });
+      afterWrite?.();
       return {
         ...next,
         runtime_degraded: !journaled,
@@ -773,8 +1131,9 @@ export class Core {
       };
     });
   }
-  async newPeriod(kind: Period, date: string) {
+  async newPeriod(kind: Period, date: string,authorize?:()=>unknown,afterWrite?:()=>void) {
     return this.store.exclusive(() => {
+      authorize?.();
       const result = createPeriod(this.store, kind, date);
       if (
         kind === "daily" &&
@@ -825,10 +1184,25 @@ export class Core {
           .map((x) => x.target_ref.id),
       );
       this.emit("document_changed", { path: result.path });
+      afterWrite?.();
       return result;
     });
   }
   async receive(input: Input) {
+    this.store.state.requireWork();
+    const received=this.store.now(),stamp=Date.parse(input.occurred_at);
+    const payloadHash=hash(canonicalJson([input.text,input.occurred_at,input.reply_to??null]));
+    if(!Number.isFinite(stamp) || !/(Z|[+-]\d\d:\d\d)$/i.test(input.occurred_at))
+      throw new AppError("INPUT_TIME_INVALID","消息缺少可靠的带时区事件时间",400);
+    if(input.channel!=="web" && input.channel!=="coordinator") {
+      const clock=this.store.time.read();
+      if(!clock.trusted)throw new AppError("CLOCK_UNTRUSTED","时间未核实，暂不接纳外部变更",503);
+      const meta=this.store.runtimeMeta(),floor=Math.max(Date.parse(meta.replay_floor??"1970-01-01T00:00:00Z"),
+        Date.parse(received)-this.store.config.channel.accept_window_seconds*1000,Date.parse(meta.restore_boundary??"1970-01-01T00:00:00Z"));
+      if(stamp<floor || stamp>Date.parse(received)+this.store.config.channel.future_skew_seconds*1000)
+        throw new AppError("INPUT_REPLAY_SUPPRESSED","事件超出接纳窗口，需要以新的消息重新交代",409);
+      this.store.updateRuntimeMeta(m=>({...m,replay_floor:new Date(floor).toISOString()}));
+    }
     if (
       input.channel !== "web" &&
       this.store.recoveryStartedAt &&
@@ -848,10 +1222,14 @@ export class Core {
       throw new AppError("INPUT_TOO_OLD", "不自动重放30天前的渠道事件", 400);
     const old = this.store.db
       .prepare(
-        "SELECT id FROM inbox WHERE channel=? AND actor_ref=? AND external_id=?",
+        "SELECT id,body,occurred_at,metadata_json FROM inbox WHERE channel=? AND actor_ref=? AND external_id=?",
       )
       .get(input.channel, input.actor_ref, input.external_id) as any;
-    if (old) return { id: old.id, duplicate: true };
+    if (old) {
+      const oldHash=JSON.parse(old.metadata_json).payload_hash??(old.body!==null?hash(canonicalJson([old.body,old.occurred_at,JSON.parse(old.metadata_json).reply_to??null])):null);
+      if(oldHash!==payloadHash)throw new AppError("INPUT_ID_CONFLICT","同一事件标识对应不同内容，未重复执行",409);
+      return {id:old.id,duplicate:true};
+    }
     if (
       Buffer.byteLength(input.text) > this.store.config.channel.max_input_bytes
     ) {
@@ -877,10 +1255,10 @@ export class Core {
     }
     const queued = this.store.db
       .prepare(
-        "SELECT count(*) AS n FROM inbox WHERE status IN ('pending','processing')",
+        "SELECT count(*) AS n FROM inbox WHERE status IN ('pending','processing') AND channel<>'coordinator'",
       )
       .get() as { n: number };
-    if (queued.n >= 10 && !/不提醒|暂停/.test(input.text))
+    if (queued.n >= 10)
       throw new AppError("QUEUE_FULL", "还有事项正在处理，请稍后再交代", 429);
     this.store.db
       .prepare(
@@ -895,10 +1273,17 @@ export class Core {
         JSON.stringify({
           reply_to: input.reply_to ?? null,
           note_scope: input.note_scope ?? [],
+          payload_hash:payloadHash,
         }),
         this.store.now(),
         input.occurred_at,
       );
+    // Production Agent owns language understanding. Legacy API adapters retain
+    // their old protocol, but no natural-language shortcut can pre-empt this loop.
+    if (this.agent?.executionMode === "tools-v2") {
+      void this.processPending();
+      return { id: input.id, duplicate: false };
+    }
     if (
       input.channel === "qq" &&
       /^(继续|继续阅读)[。！!\s]*$/.test(input.text)
@@ -937,6 +1322,62 @@ export class Core {
       this.finishInput(input, result.message);
       return { id: input.id, duplicate: false };
     }
+    const pendingProposal = this.store
+      .registry()
+      .proposals.filter(
+        (p) => p.status === "pending" && p.expires_at > this.store.now(),
+      );
+    const chosen = this.consentProposals(input);
+    const accepts = chosen.length > 0;
+    const rejects =
+      /^(不要(了)?|不了|不接受|拒绝|取消这个方案|不按这个|算了)[。！!\s]*$/.test(
+        input.text,
+      );
+    if (accepts || (rejects && pendingProposal.length === 1)) {
+      const p = pendingProposal[0];
+      try {
+        const result = accepts
+          ? await this.execute(
+              input,
+              chosen.map((p) => ({
+                type: "accept_proposal",
+                target_id: p.id,
+                expected_version: p.version,
+              })),
+              "accept-batch:" +
+                chosen
+                  .map((p) => p.id)
+                  .sort()
+                  .join(":"),
+              true,
+            )
+          : await this.execute(
+              input,
+              [
+                {
+                  type: "reject_proposal",
+                  target_id: p.id,
+                  expected_version: p.version,
+                },
+              ],
+              "reject:" + p.id,
+            );
+        this.finishInput(
+          input,
+          accepts
+            ? this.executionReceipt(result)
+            : "好，这份建议先放下，原来的承诺不变。",
+        );
+      } catch (error) {
+        this.finishInput(
+          input,
+          error instanceof AppError
+            ? error.message + "，原承诺保留。"
+            : "这份安排暂未执行，原承诺保留。",
+        );
+      }
+      return { id: input.id, duplicate: false };
+    }
     if (
       input.reply_to &&
       /^(做了|完成了|完成|做完了|已完成|没做|没做成|跳过|这次跳过)[。！!\s]*$/.test(
@@ -973,9 +1414,12 @@ export class Core {
           else
             action = /没做|跳过/.test(input.text)
               ? {
-                  type: "update_task_progress",
+                  type: "report_execution",
                   target_id: target.id,
                   expected_version: target.version,
+                  execution: /^没做[。！!\s]*$/.test(input.text)
+                    ? "not_started"
+                    : "not_done",
                   report: "本次暂未推进。",
                 }
               : {
@@ -1047,6 +1491,7 @@ export class Core {
   }
   queueReply(input: Input, text: string) {
     const now = this.store.now();
+    const native = this.agent?.executionMode === "tools-v2";
     const chunks: string[] = [];
     while (text.length) {
       let end = Math.min(text.length, 1800);
@@ -1056,18 +1501,18 @@ export class Core {
     }
     // The channel may limit passive replies per inbound message. Keep the rest
     // in the existing reply record and continue against a fresh user message.
-    const page = chunks.slice(0, 4),
+    const page = native ? chunks : chunks.slice(0, 4),
       consumed = page.reduce((n, s) => n + s.length, 0);
     this.store.db
       .prepare(
         "UPDATE inbox SET metadata_json=json_set(metadata_json,'$.reply_next_offset',?) WHERE id=?",
       )
-      .run(chunks.length > 4 ? consumed : 0, input.id);
-    if (chunks.length > 4) page[3] += "\n\n内容较长，回复“继续”查看余下内容。";
+      .run(!native && chunks.length > 4 ? consumed : 0, input.id);
+    if (!native && chunks.length > 4) page[3] += "\n\n内容较长，回复“继续”查看余下内容。";
     this.store.db.transaction(() => {
       for (const [index, chunk] of page.entries()) {
         const body =
-          page.length > 1 ? `（${index + 1}/${page.length}）\n${chunk}` : chunk;
+          !native && page.length > 1 ? `（${index + 1}/${page.length}）\n${chunk}` : chunk;
         this.store.db
           .prepare(
             "INSERT OR IGNORE INTO outbox(id,channel,recipient_ref,dedupe_key,target_refs_json,source_versions_json,message_kind,body,content_hash,scheduled_at,expires_at,counts_as_proactive,created_at,updated_at) VALUES(?,?,?,?,?,?, 'receipt',?,?,?,?,0,?,?)",
@@ -1077,8 +1522,18 @@ export class Core {
             "qq",
             input.actor_ref,
             input.id + ":reply" + (index ? ":" + (index + 1) : ""),
-            "[]",
-            "{}",
+            JSON.stringify(
+              (
+                JSON.parse(
+                  (
+                    this.store.db
+                      .prepare("SELECT metadata_json FROM inbox WHERE id=?")
+                      .get(input.id) as any
+                  )?.metadata_json ?? "{}",
+                ).offered_proposal_ids ?? []
+              ).map((id: string) => ({ kind: "proposal", id })),
+            ),
+            native ? JSON.stringify({language: "llm"}) : "{}",
             body,
             hash(body),
             now,
@@ -1101,13 +1556,20 @@ export class Core {
       if (out)
         targetIds = JSON.parse(out.target_refs_json).map((x: any) => x.id);
     }
+    const previousShown=this.store.db.prepare("SELECT metadata_json FROM inbox WHERE channel=? AND actor_ref=? AND id<>? AND json_type(metadata_json,'$.offered_proposals')='array' ORDER BY rowid DESC LIMIT 1")
+      .get(input.channel,input.actor_ref,input.id) as {metadata_json:string}|undefined;
+    const shown:any[]=previousShown?JSON.parse(previousShown.metadata_json).offered_proposals:[];
+    const referenced=new Set((r.followups??[]).filter(f=>f.work && f.status!=="resolved").slice(-6)
+      .flatMap(f=>f.work!.refs?.flatMap(ref=>ref.id?[ref.id]:[])??[]));
+    const rank=(x:{id:string;title?:string;updated_at?:string})=>Number(targetIds.includes(x.id))*100+
+      Number(input.text.includes(x.id))*80+Number(!!x.title && input.text.includes(x.title))*60+Number(referenced.has(x.id))*20;
     const items = [
       ...r.habits.filter((x) => x.status === "active"),
       ...r.tasks.filter(
         (x) =>
           !["done", "cancelled"].includes(x.status) || targetIds.includes(x.id),
       ),
-    ];
+    ].sort((a,b)=>rank(b)-rank(a)||(b.updated_at??"").localeCompare(a.updated_at??""));
     const selected = targetIds.length
       ? items.filter((x) => targetIds.includes(x.id))
       : items;
@@ -1135,21 +1597,35 @@ export class Core {
       }
       return {
         path: ref.path,
+        hash:hash(raw),
         heading: ref.heading,
         content: content.slice(0, 5000),
         truncated: content.length > 5000,
       };
     });
-    const userPath = this.store.files.resolve(
-      ".agent/context/user.md",
-      "internal",
+    const memory = this.assistant.preferences(
+      input.text,
+      selected.filter((x) => "outcome" in x).map((x) => x.id),
+      input.channel === "coordinator" ? "planning" : "all",
     );
-    const fullPreferences = fs.existsSync(userPath)
-      ? fs.readFileSync(userPath, "utf8")
-      : "";
-    const preferences = fullPreferences.slice(-2000);
+    const preferences = memory.selected;
     const context = {
+      assistant: this.assistant.view(),
+      work:(r.followups??[]).filter(f=>f.work && f.status!=="resolved").slice(-6),
       application: applicationCapabilities,
+      displayed_proposals:shown.map(ref=>{const p=r.proposals.find(p=>p.id===ref.proposal_id);
+        return {...ref,current_version:p?.version??null,current_hash:p?hash(canonicalJson({version:p.version,actions:p.actions})):null};}),
+      planning: {
+        today_status:
+          this.store.day(
+            localDate(this.store.clock(), this.store.config.timezone),
+          ).planning?.status ?? "not_prepared",
+        issues: this.coordinator
+          .view(localDate(this.store.clock(), this.store.config.timezone))
+          .issues.slice(0, 3),
+        query:
+          "secretary.planning按date查询完整安排和已确认空闲；明确交代的set_planning/configure_task/report_execution/plan_day经secretary.apply_changes执行，未定建议才保存提案。没有回复不等于没做。",
+      },
       workspace: {
         available: true,
         note_root: "日记仓库",
@@ -1172,10 +1648,22 @@ export class Core {
           r.plans.filter((x) => x.window_end >= this.store.now()).length > 20,
         controls: false,
         proposals: false,
-        preferences: fullPreferences.length > 2000,
+        preferences: memory.truncated,
         documents: false,
+        assistant: false,
       },
       now: this.store.now(),
+      now_local: DateTime.fromISO(this.store.now())
+        .setZone(this.store.config.timezone)
+        .toISO(),
+      tomorrow_date: DateTime.fromJSDate(this.store.clock(), {
+        zone: this.store.config.timezone,
+      })
+        .plus({ days: 1 })
+        .toISODate(),
+      input_mode: input.channel === "coordinator" ? "background_proposal" : this.agent?.executionMode === "tools-v2" ? "autonomous_tools" : discussionOnly(input.text)
+        ? proposalRequested(input.text) ? "proposal_only" : "discussion_read_only"
+        : "interpret_request",
       business_date: localDate(this.store.clock(), this.store.config.timezone),
       timezone: this.store.config.timezone,
       items: selected.slice(0, 30),
@@ -1185,8 +1673,22 @@ export class Core {
       controls: r.controls.filter((x) => x.ends_at > this.store.now()),
       proposals: r.proposals.filter(
         (x) => x.status === "pending" && x.expires_at > this.store.now(),
-      ),
+      ).sort((a,b)=>Number(shown.some(x=>x.proposal_id===b.id))-Number(shown.some(x=>x.proposal_id===a.id))||b.updated_at.localeCompare(a.updated_at)),
       reply_target_ids: targetIds,
+      reply_occurrences: input.reply_to
+        ? (() => {
+            const row = this.store.db
+              .prepare(
+                "SELECT target_refs_json FROM outbox WHERE external_id=? OR id=?",
+              )
+              .get(input.reply_to, input.reply_to) as any;
+            return row
+              ? JSON.parse(row.target_refs_json).filter(
+                  (x: any) => x.occurrence_id,
+                )
+              : [];
+          })()
+        : [],
       reply_business_date: input.reply_to
         ? (() => {
             const row = this.store.db
@@ -1202,6 +1704,20 @@ export class Core {
           })()
         : null,
       preferences,
+      recent_contacts: (
+        this.store.db
+          .prepare(
+            "SELECT body,source_versions_json,target_refs_json,sent_at,status FROM outbox WHERE counts_as_proactive=1 AND status IN ('sent','unknown') AND body IS NOT NULL ORDER BY rowid DESC LIMIT 3",
+          )
+          .all() as any[]
+      )
+        .reverse()
+        .map((row) => ({
+          text: row.body.slice(0, 600),
+          at: row.sent_at,
+          delivery: row.status,
+          target_refs: JSON.parse(row.target_refs_json),
+        })),
       recent_interactions: (
         this.store.db
           .prepare(
@@ -1212,12 +1728,72 @@ export class Core {
         .reverse()
         .map((row) => ({
           input_id: row.id,
-          text: row.body.slice(0, 120),
-          reply: String(JSON.parse(row.metadata_json).reply ?? "").slice(0, 80),
-          at: row.received_at,
+          text: row.body.slice(0, this.agent?.executionMode === "tools-v2" ? 1000 : 120),
+          reply: String(JSON.parse(row.metadata_json).reply ?? "").slice(0, this.agent?.executionMode === "tools-v2" ? 1800 : 80),
+          at: DateTime.fromISO(row.received_at)
+            .setZone(this.store.config.timezone)
+            .toISO(),
         })),
       documents,
     };
+    context.assistant.rules = context.assistant.rules
+      .filter((x) => x.enabled)
+      .slice(-12);
+    context.assistant.principles = memory.principles;
+    context.assistant.automations = context.assistant.automations
+      .filter((x) => x.status !== "retired" || targetIds.includes(x.id))
+      .sort(
+        (a, b) =>
+          Number(targetIds.includes(b.id)) - Number(targetIds.includes(a.id)),
+      )
+      .slice(0, 12);
+    context.assistant.objects = [
+      ...context.assistant.rules,
+      ...context.assistant.automations,
+      ...(context.assistant.focus ? [context.assistant.focus] : []),
+    ].map((x) => ({ id: x.id, version: x.version }));
+    context.assistant.board.now = context.assistant.board.now.slice(0, 1);
+    context.assistant.board.blocked = context.assistant.board.blocked.slice(
+      0,
+      2,
+    );
+    context.assistant.board.needs_decision =
+      context.assistant.board.needs_decision.slice(0, 2);
+    // Keep the automatic bundle small; complete objects remain available through read tools.
+    for (const list of [
+      context.assistant.rules,
+      context.assistant.principles,
+      context.assistant.board.followups,
+      context.assistant.automations,
+      context.assistant.board.next,
+      context.assistant.board.blocked,
+      context.assistant.board.needs_decision,
+      context.work,
+    ]) {
+      while (JSON.stringify(context).length > 12000 && list.length) {
+        list.pop();
+        context.truncated.assistant = true;
+      }
+    }
+    if (JSON.stringify(context).length > 12000) {
+      context.assistant.values = Object.fromEntries(
+        Object.entries(context.assistant.values).filter(
+          ([, v]) => JSON.stringify(v).length < 500,
+        ),
+      );
+      context.assistant.planning = {
+        ...context.assistant.planning,
+        availability: [],
+        protected: [],
+        day_overrides: [],
+      };
+      context.truncated.assistant = true;
+    }
+    context.assistant.objects = [
+      ...context.assistant.rules,
+      ...context.assistant.automations,
+      ...(context.assistant.focus ? [context.assistant.focus] : []),
+    ].map((x) => ({ id: x.id, version: x.version }));
     while (JSON.stringify(context).length > 12000 && context.items.length) {
       context.items.pop();
       context.truncated.items = true;
@@ -1249,6 +1825,17 @@ export class Core {
         doc.truncated = true;
         context.truncated.documents = true;
       }
+    for (const list of [
+      context.recent_contacts,
+      context.documents,
+      context.assistant.board.now,
+      context.planning.issues,
+      context.reply_occurrences,
+    ])
+      while (JSON.stringify(context).length > 12000 && list.length) {
+        list.pop();
+        context.truncated.assistant = true;
+      }
     return context;
   }
   async processPending() {
@@ -1260,12 +1847,18 @@ export class Core {
     try {
       for (;;) {
         if (this.stopping) return;
+        if(this.foregroundStreak>=3) {
+          this.foregroundStreak=0;
+          this.assistant.startPlanning(true);
+          await this.assistant.drain();
+        }
         const row = this.store.db
           .prepare(
-            "SELECT * FROM inbox WHERE status='pending' ORDER BY rowid LIMIT 1",
+            "SELECT * FROM inbox WHERE status='pending' AND channel<>'coordinator' ORDER BY rowid LIMIT 1",
           )
           .get() as any;
         if (!row) break;
+        this.foregroundStreak++;
         const metadata = JSON.parse(row.metadata_json),
           input: Input = {
             id: row.id,
@@ -1283,47 +1876,150 @@ export class Core {
           )
           .run(input.id);
         try {
+          if (this.agent.executionMode === "tools-v2") {
+            await processNativeInput(this, input);
+            continue;
+          }
           const r = this.store.registry(),
             pending = r.proposals.filter(
               (x) => x.status === "pending" && x.expires_at > this.store.now(),
             );
+          const readOnly = discussionOnly(input.text);
+          this.store.db
+            .prepare(
+              "UPDATE inbox SET metadata_json=json_set(metadata_json,'$.read_only',json(?)) WHERE id=?",
+            )
+            .run(JSON.stringify(readOnly), input.id);
+          const last = this.store.db
+            .prepare(
+              "SELECT metadata_json FROM inbox WHERE status='processed' AND channel=? AND actor_ref=? ORDER BY rowid DESC LIMIT 1",
+            )
+            .get(input.channel, input.actor_ref) as any;
+          const lastMeta = last ? JSON.parse(last.metadata_json) : {};
+          const continuation =
+            !readOnly &&
+            lastMeta.awaiting_execution?.expires_at > this.store.now() &&
+            input.text.length <= 160 &&
+            /(?:\d|[一二三四五六七八九十]点|每天|工作日|周末|周[一二三四五六日天]|星期|上午|下午|晚上|分钟|小时)/u.test(
+              input.text,
+            )
+              ? lastMeta.awaiting_execution
+              : null;
+          const chosen = this.consentProposals(input);
+          if (chosen.length) {
+            const outcome = await this.execute(
+              input,
+              chosen.map((p) => ({
+                type: "accept_proposal",
+                target_id: p.id,
+                expected_version: p.version,
+              })),
+              "accept-batch:" +
+                chosen
+                  .map((p) => p.id)
+                  .sort()
+                  .join(":"),
+              true,
+            );
+            this.finishInput(input, this.executionReceipt(outcome));
+            continue;
+          }
+          if (/^(好|好的|可以|就这样|同意)[。！!\s]*$/u.test(input.text)) {
+            if (pending.length > 1) {
+              const shown = pending.slice(0, 8);
+              this.store.db.prepare("UPDATE inbox SET metadata_json=json_set(metadata_json,'$.offered_proposal_ids',json(?)) WHERE id=?")
+                .run(JSON.stringify(shown.map((p) => p.id)), input.id);
+              this.finishInput(input, "还有多份待定安排，暂未执行：\n" + shown.map((p, i) =>
+                (i + 1) + ". " + p.actions.map((a) => this.actionLabel(a)).join("、")).join("\n") +
+                "\n可以回复某一份消息确认，或明确说这些都提交。");
+            } else this.finishInput(input, "好。");
+            continue;
+          }
           if (
-            /^(好|好的|可以|就这样|同意)[。！!\s]*$/.test(input.text) &&
-            pending.length > 1
+            readOnly &&
+            pending.length &&
+            /(?:列|复述).*(?:创建|安排|要做)|要创建什么/u.test(input.text)
           ) {
+            this.store.db
+              .prepare(
+                "UPDATE inbox SET metadata_json=json_set(metadata_json,'$.offered_proposal_ids',json(?),'$.reviewed_proposal_ids',json(?)) WHERE id=?",
+              )
+              .run(JSON.stringify(pending.map((p) => p.id)), JSON.stringify(pending.map((p) => p.id)), input.id);
             this.finishInput(
               input,
-              "你指哪份安排：" +
+              "待你决定的安排：\n" +
                 pending
-                  .slice(-2)
-                  .map((p) => p.summary.slice(0, 35))
-                  .join("，还是") +
-                "？",
+                  .map(
+                    (p, i) =>
+                      i +
+                      1 +
+                      ". " +
+                      p.actions.map((a) => this.actionLabel(a)).join("、"),
+                  )
+                  .join("\n") +
+                "\n这些变更尚未执行，可以一次确认整批。",
             );
             continue;
           }
           if (
-            /^(好|好的|可以|就这样|同意)[。！!\s]*$/.test(input.text) &&
+            /^(不要(了)?|不了|不接受|拒绝|取消这个方案|不按这个|算了)[。！!\s]*$/.test(
+              input.text,
+            ) &&
             pending.length === 1
           ) {
-            await this.acceptProposal(pending[0].id, pending[0].version, input);
-            this.finishInput(input, "已按刚才的安排记下。");
+            const p = pending[0];
+            await this.execute(
+              input,
+              [
+                {
+                  type: "reject_proposal",
+                  target_id: p.id,
+                  expected_version: p.version,
+                },
+              ],
+              "reject:" + p.id,
+            );
+            this.finishInput(input, "好，这份建议先放下，原来的承诺不变。");
             continue;
           }
           const bundle = this.context(input);
+          const policy = policyStamp(this.store);
+          this.store.db.prepare("UPDATE inbox SET metadata_json=json_set(metadata_json,'$.policy_stamp',?) WHERE id=?")
+            .run(policy, input.id);
           const result = await this.agent.interpret(input, bundle);
           if (this.stopping) return;
+          if (result.action_groups.some((g) => g.actions.length) && policy !== policyStamp(this.store))
+            throw new AppError("VERSION_CONFLICT", "个人规则或可用时间已变化，本轮旧方案未执行", 409);
           if (result.action_groups.length > 20)
             throw new AppError("AGENT_INVALID", "提案过多");
+          // A model inventing actions during a question must not manufacture a
+          // pending commitment that a later casual “好” could accidentally accept.
+          const suppressed = readOnly && !proposalRequested(input.text) && result.action_groups.some((g) => g.actions.length);
+          if (suppressed) result.action_groups = [];
           let reply = "";
           const groupErrors: string[] = [];
           let acceptedGroups = 0;
+          const deferred: Action[] = [];
           const groupResults: {
             status: string;
             operation_id?: string;
             reason?: string;
           }[] = [];
-          for (const group of result.action_groups) {
+          const groups =
+            (explicitCommitment(input.text) ||
+              (continuation &&
+                result.action_groups
+                  .flatMap((g) => g.actions)
+                  .every((a) => continuation.action_types.includes(a.type)))) &&
+            result.action_groups.flatMap((g) => g.actions).length <= 20
+              ? [
+                  {
+                    action_identity: "user-batch:" + input.id,
+                    actions: result.action_groups.flatMap((g) => g.actions),
+                  },
+                ].filter((g) => g.actions.length)
+              : result.action_groups;
+          for (const group of groups) {
             try {
               if (!Array.isArray(group.actions))
                 throw new AppError("AGENT_INVALID", "提案结构不正确");
@@ -1333,9 +2029,32 @@ export class Core {
               const known = [
                 ...bundle.items,
                 ...bundle.plans,
-                ...(JSON.parse(access.metadata_json).authorized_objects ?? []),
+                ...bundle.proposals,
+                ...bundle.assistant.objects,
+                ...(JSON.parse(access.metadata_json).observed_refs ?? []),
               ];
               for (const action of group.actions) {
+                const excludedKind =
+                  action.type === "create_task"
+                    ? "任务"
+                    : action.type === "create_habit"
+                      ? "习惯"
+                      : null;
+                if (
+                  excludedKind &&
+                  input.text
+                    .split(/[，,。；;！!\n]/u)
+                    .some(
+                      (clause) =>
+                        /不(?:要)?(?:再)?(?:新建|创建|建立|新增|建)/u.test(
+                          clause,
+                        ) && clause.includes(excludedKind),
+                    )
+                )
+                  throw new AppError(
+                    "USER_RESTRICTION",
+                    "这部分包含你明确不创建的事项，未执行",
+                  );
                 if (
                   [
                     "accept_proposal",
@@ -1373,6 +2092,20 @@ export class Core {
                     "cancel_item",
                     "remember_fact",
                     "link_diary",
+                    "set_planning",
+                    "configure_task",
+                    "plan_day",
+                    "set_personal_rule",
+                    "control_rule",
+                    "undo_rule",
+                    "create_automation",
+                    "update_automation",
+                    "control_automation",
+                    "start_focus",
+                    "pause_focus",
+                    "resume_focus",
+                    "stop_focus",
+                    "set_period_focus",
                   ].includes(a.type),
                 ) ||
                 group.actions.some((a) => {
@@ -1389,39 +2122,26 @@ export class Core {
                     Date.parse(a.window_end) > Date.parse(plan.window_end)
                   );
                 });
-              const explicit = explicitCommitment(input.text);
-              if (newCommitment && !explicit) {
-                await this.store.exclusive(() =>
-                  this.store.commit(
-                    input.id +
-                      ":proposal:" +
-                      hash(canonicalJson(group.actions)),
-                    input.channel,
-                    input.id,
-                    (registry, _, op) => {
-                      registry.proposals.push({
-                        id: id("proposal"),
-                        version: 1,
-                        created_at: this.store.now(),
-                        updated_at: this.store.now(),
-                        last_operation_id: op,
-                        summary: result.summary ?? "建议安排如下",
-                        actions: group.actions,
-                        expires_at: DateTime.fromISO(this.store.now())
-                          .plus({ hours: 24 })
-                          .toUTC()
-                          .toISO()!,
-                        status: "pending",
-                        source: this.source(input),
-                      });
-                      return { ids: [], message: "提案已保存" };
-                    },
-                  ),
-                );
+              const explicit =
+                explicitCommitment(input.text) ||
+                (continuation &&
+                  group.actions.every((a) =>
+                    continuation.action_types.includes(a.type),
+                  )) ||
+                (group.actions.every(
+                  (a) =>
+                    a.type === "set_personal_rule" &&
+                    (a.key === "contact.style" ||
+                      a.key === "support.style" ||
+                      String(a.key).startsWith("working.")),
+                ) &&
+                  !/(?:如果|假如|比如|是否)/u.test(input.text) &&
+                  /(?:不要|别|以后|下次|往后|简短|称呼|叫我|温和|直接)/u.test(
+                    input.text,
+                  ));
+              if (readOnly || (newCommitment && !explicit)) {
+                deferred.push(...group.actions);
                 groupResults.push({ status: "needs_confirmation" });
-                this.emit("item_changed", { ids: [] });
-                reply =
-                  "这份安排已留作待确认，尚未创建任务或设置提醒。回复“好”后才会执行。";
               } else {
                 const outcome = await this.execute(
                   input,
@@ -1429,7 +2149,7 @@ export class Core {
                   group.action_identity,
                   true,
                 );
-                reply = outcome.message;
+                reply = [reply, this.executionReceipt(outcome)].filter(Boolean).join("\n");
                 acceptedGroups++;
                 groupResults.push({
                   status: "accepted",
@@ -1450,6 +2170,61 @@ export class Core {
               });
             }
           }
+          if (deferred.length) {
+            const saved = await this.store.exclusive(() =>
+              this.store.commit(
+                input.id + ":proposal-batch",
+                input.channel,
+                input.id,
+                (registry, _load, op) => {
+                  if (deferred.length > 20)
+                    throw new AppError(
+                      "BATCH_TOO_LARGE",
+                      "这批变更超过单次20项，尚未保存，请缩小本次范围",
+                    );
+                  const signature = canonicalJson(deferred);
+                  const prior = registry.proposals.find(
+                    (p) =>
+                      p.status === "pending" &&
+                      p.expires_at > this.store.now() &&
+                      canonicalJson(p.actions) === signature,
+                  );
+                  const proposal = prior ?? {
+                    id: id("proposal"),
+                    version: 1,
+                    created_at: this.store.now(),
+                    updated_at: this.store.now(),
+                    last_operation_id: op,
+                    summary: (result.summary ?? "安排建议").slice(0, 500),
+                    actions: deferred,
+                    expires_at: DateTime.fromISO(this.store.now())
+                      .plus({ hours: 24 })
+                      .toUTC()
+                      .toISO()!,
+                    status: "pending" as const,
+                    source: this.source(input),
+                  };
+                  if (!prior) registry.proposals.push(proposal);
+                  return { ids: [proposal.id], message: "整批建议已保存" };
+                },
+              ),
+            );
+            this.store.db
+              .prepare(
+                "UPDATE inbox SET metadata_json=json_set(metadata_json,'$.offered_proposal_ids',json(?)) WHERE id=?",
+              )
+              .run(JSON.stringify(saved.updated_ids), input.id);
+            reply =
+              (reply ? reply + "\n" : "") +
+              (readOnly ? "尚未创建任务或设置提醒；" : "") +
+              "待你决定的整批建议：" +
+              deferred
+                .map((a) => this.actionLabel(a))
+                .slice(0, 8)
+                .join("、") +
+              "。这些变更尚未执行，可以一次确认整批。";
+            this.emit("item_changed", { ids: [] });
+          }
           this.store.db
             .prepare(
               "UPDATE inbox SET metadata_json=json_set(metadata_json,'$.groups',json(?)) WHERE id=?",
@@ -1457,39 +2232,67 @@ export class Core {
             .run(JSON.stringify(groupResults), input.id);
           if (groupErrors.length)
             reply =
-              (acceptedGroups ? "明确的部分已记下；" : "暂未改动：") +
-              groupErrors.slice(0, 1).join("；") +
+              (reply ? reply + "\n未处理部分：" : "暂未改动：") +
+              groupErrors.slice(0, 5).join("；") +
               "。";
-          const factualReply = reply;
-          if (
-            reply &&
-            !result.clarification &&
-            !groupErrors.length &&
-            acceptedGroups > 0 &&
-            !factualReply.includes("静默时段") &&
-            this.agent.compose
-          ) {
-            try {
-              reply = (
-                await this.agent.compose({
-                  kind: "receipt",
-                  message: reply,
-                  groups: groupResults,
-                  executed: true,
-                })
-              ).text;
-            } catch {
-              /* The saved execution is authoritative; composition failure keeps the factual receipt. */
-            }
-          }
+          // Core receipts preserve exact execution facts and avoid a second model call.
           if (this.stopping) return;
+          const clarification =
+            result.reply_intent === "clarification"
+              ? result.clarification
+              : null;
+          if (
+            clarification &&
+            !readOnly &&
+            (explicitCommitment(input.text) || continuation)
+          ) {
+            const authorization = continuation ?? {
+              request_id: input.id,
+              action_types: requestActionTypes(input.text),
+              expires_at: DateTime.fromISO(this.store.now())
+                .plus({ hours: 24 })
+                .toUTC()
+                .toISO(),
+            };
+            this.store.db
+              .prepare(
+                "UPDATE inbox SET metadata_json=json_set(metadata_json,'$.awaiting_execution',json(?)) WHERE id=?",
+              )
+              .run(JSON.stringify(authorization), input.id);
+          }
+          // A model often repeats the same question in discussion and
+          // clarification. With no executed change, send the one self-contained
+          // question. Keep file-operation facts when a write already happened.
+          const fileWrites =
+            clarification && !reply
+              ? (JSON.parse(
+                  (
+                    this.store.db
+                      .prepare("SELECT metadata_json FROM inbox WHERE id=?")
+                      .get(input.id) as any
+                  ).metadata_json,
+                ).workspace_operations ?? [])
+              : [];
+          // A syntactically valid answer is not proof of an operation. In
+          // particular an empty receipt must not resurrect the old "已建好"
+          // failure when the model forgot to submit its business actions.
+          if (!reply && !clarification && !readOnly &&
+            (result.reply_intent === "receipt" || explicitCommitment(input.text) || continuation)) {
+            const effects = this.inputEffects(input.id);
+            reply = effects.applied.length
+              ? "已处理：" + effects.applied.join("；") + "。"
+              : effects.uncertain
+                ? "有操作尚未取得最终回执，请先核对实际状态，未确认全部完成。"
+                : "本轮没有保存或执行变更，原有记录保留。";
+          }
           this.finishInput(
             input,
             [
-              reply || result.discussion || result.summary,
-              result.reply_intent === "clarification"
-                ? result.clarification
-                : null,
+              (suppressed ? "本轮只查询和讨论，没有创建或修改事项。\n" + (result.discussion || "") : reply) ||
+                (clarification && !fileWrites.length
+                  ? null
+                  : result.discussion || result.summary),
+              clarification,
             ]
               .filter((v, index, all) => v && all.indexOf(v) === index)
               .join("\n") ||
@@ -1506,14 +2309,19 @@ export class Core {
           const writes = runtime
             ? (JSON.parse(runtime.metadata_json).workspace_operations ?? [])
             : [];
-          const failureMessage = writes.length
+          const effects = this.inputEffects(input.id);
+          const failureMessage = effects.applied.length || effects.uncertain
+            ? "处理未全部完成。" +
+              (effects.applied.length ? "已保存：" + effects.applied.join("；") + "。" : "") +
+              (effects.uncertain ? "另有文件操作未取得最终回执，请先查询当前状态，避免重复。" : "其余部分未执行。")
+            : writes.length
             ? "部分文件操作已完成，但回复生成失败。已操作：" +
               writes
                 .map((w: any) => w.path)
                 .slice(0, 3)
                 .join("、") +
               "。请先检查，避免重复修改。"
-            : "暂未处理成功，可稍后重试。";
+            : error instanceof AppError ? error.message + "；原有记录保留。" : "暂未处理成功，可稍后重试。";
           this.store.db
             .prepare(
               "UPDATE inbox SET status='failed',processed_at=?,error_code=?,metadata_json=json_set(metadata_json,'$.reply',?) WHERE id=?",
@@ -1525,7 +2333,9 @@ export class Core {
             error: code,
             message: failureMessage,
           });
-          if (input.channel === "qq") this.queueReply(input, failureMessage);
+          // Native language failures remain observable in status/logs. Never
+          // send a canned fallback or replay already successful business work.
+          if (input.channel === "qq" && this.agent.executionMode !== "tools-v2") this.queueReply(input, failureMessage);
         }
       }
     } finally {
@@ -1559,10 +2369,130 @@ export class Core {
       true,
     );
   }
+  private executionReceipt(outcome: Execution) {
+    const r = this.store.registry(),
+      ids = new Set(outcome.updated_ids);
+    const plans = r.plans.filter(
+      (p) => ids.has(p.id) && ["planned", "active"].includes(p.status),
+    );
+    const habits = r.habits.filter((h) => ids.has(h.id));
+    const autos = (r.automations ?? []).filter(
+      (a) => ids.has(a.id) && a.status === "active",
+    );
+    return [
+      outcome.message,
+      plans.length
+        ? "已保存安排：" +
+          plans
+            .slice(0, 3)
+            .map(
+              (p) =>
+                DateTime.fromISO(p.window_start)
+                  .setZone(this.store.config.timezone)
+                  .toFormat("yyyy-MM-dd HH:mm") +
+                "—" +
+                DateTime.fromISO(p.window_end)
+                  .setZone(this.store.config.timezone)
+                  .toFormat("HH:mm") +
+                " " +
+                p.next_action,
+            )
+            .join("；") +
+          "。"
+        : "",
+      habits.length
+        ? "习惯记录已更新" + habits.length + "项；提醒按各项设置执行。"
+        : "",
+      autos.length
+        ? "自动化记录已更新：" +
+          autos
+            .slice(0, 3)
+            .map((a) => a.title)
+            .join("、") +
+          "。"
+        : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+  private consentProposals(input: Input): Proposal[] {
+    const consent = confirmation(input.text);
+    if (!consent) return [];
+    const pending = this.store
+      .registry()
+      .proposals.filter(
+        (p) => p.status === "pending" && p.expires_at > this.store.now(),
+      );
+    const last = this.store.db
+      .prepare(
+        "SELECT metadata_json,received_at FROM inbox WHERE status='processed' AND channel=? AND actor_ref=? ORDER BY rowid DESC LIMIT 1",
+      )
+      .get(input.channel, input.actor_ref) as any;
+    const meta = last ? JSON.parse(last.metadata_json) : {};
+    let offered: string[] = meta.offered_proposal_ids ?? [];
+    if (consent === "yes" && pending.length > 1 && !input.reply_to)
+      return pending.filter((p) => (meta.reviewed_proposal_ids ?? []).includes(p.id));
+    if (consent === "latest")
+      return pending.filter((p) => offered.includes(p.id)).slice(-1);
+    const contact = input.reply_to
+      ? (this.store.db
+          .prepare(
+            "SELECT target_refs_json,created_at FROM outbox WHERE external_id=? OR id=?",
+          )
+          .get(input.reply_to, input.reply_to) as any)
+      : (this.store.db
+          .prepare(
+            "SELECT target_refs_json,created_at FROM outbox WHERE recipient_ref=? AND status IN ('sent','unknown') ORDER BY rowid DESC LIMIT 1",
+          )
+          .get(input.actor_ref) as any);
+    if (
+      contact &&
+      (input.reply_to || contact.created_at > (last?.received_at ?? ""))
+    )
+      offered = JSON.parse(contact.target_refs_json)
+        .filter((x: any) => x.kind === "proposal")
+        .map((x: any) => x.id);
+    if (
+      !offered.length &&
+      pending.length === 1 &&
+      /回复[“"']?好/.test(meta.reply ?? ""))
+      offered = [pending[0].id];
+    if (consent === "all" && !offered.length)
+      return input.text.length < 80 && /全部|所有|[一二三四五六七八九十\d]+份/u.test(input.text) ? pending : [];
+    return pending.filter((p) => offered.includes(p.id));
+  }
+  private actionLabel(a: Action) {
+    const r = this.store.registry();
+    const labels: Record<string, string> = {
+      create_task: "任务",
+      create_habit: "习惯",
+      create_automation: "消息安排",
+      schedule: "时间安排",
+      reschedule: "改期",
+      set_planning: "可用时间",
+      configure_task: "任务下一步",
+      update_task: "任务调整",
+      update_habit: "习惯调整",
+      set_personal_rule: "个人规则",
+      start_focus: "专注计时",
+      link_diary: "日记关联",
+    };
+    const title =
+      a.title ??
+      [...r.tasks, ...r.habits, ...(r.automations ?? [])].find(
+        (x) => x.id === a.target_id,
+      )?.title;
+    return (labels[a.type] ?? "事项变更") + (title ? "：" + String(title) : "");
+  }
   items(date: string) {
     const r = this.store.registry(),
       d = this.store.day(date);
     return {
+      assistant: this.assistant.view(),
+      planning: this.coordinator.view(date),
+      tomorrow: this.coordinator.view(
+        DateTime.fromISO(date).plus({ days: 1 }).toISODate()!,
+      ),
       habits: r.habits.map((h) => ({
         ...h,
         occurrence: d.occurrences.find((o) => o.habit_id === h.id) ?? null,

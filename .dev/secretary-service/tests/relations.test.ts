@@ -97,7 +97,9 @@ it("future task schedules and future-start habits do not leak into today's diary
     },
   });
   expect(h.store.files.read(today.path)).not.toContain("- [ ] 阅读练习");
-  expect(h.store.files.read(future.path)).toContain("- [ ] 阅读练习");
+  expect(h.store.files.read(future.path)).toContain(
+    "- [ ] 17:00—17:30 阅读练习 · 写第一段",
+  );
   await h.run({
     ...habitAction,
     recurrence: { weekdays: [6], starts_on: "2026-10-24" },
@@ -115,6 +117,7 @@ it("P06 workspace artifact checker verifies a real file; model-provided success 
         kind: "artifact",
         description: "交付正文",
         artifact_ref: "03. Manual/result.md",
+        artifact_check: { kind: "exists_nonempty" },
       },
     ],
   });

@@ -1,0 +1,16 @@
+# Optional independent encrypted snapshot volume. Include alongside compose.yaml.
+services:
+  core:
+    environment:
+      SECRETARY_BACKUP_DIR: /backup
+      SECRETARY_BACKUP_KEY_FILE: /run/secrets/backup-key
+    volumes:
+      - type: bind
+        source: ${SECRETARY_BACKUP_HOST:?Set an existing independent backup directory}
+        target: /backup
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${SECRETARY_BACKUP_KEY_HOST:?Set the vault-external 32-byte key file}
+        target: /run/secrets/backup-key
+        read_only: true
+        bind: {create_host_path: false}

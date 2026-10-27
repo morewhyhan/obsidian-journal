@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "tsx apps/core/main.ts",
     "dev:web": "vite --host 127.0.0.1",
-    "build": "tsc --noEmit && tsc -p tsconfig.server.json && vite build",
+    "build": "tsx scripts/release.ts && tsc --noEmit && tsc -p tsconfig.server.json && vite build",
     "start:production": "node dist/server/apps/core/main.js",
     "start": "tsx apps/core/main.ts",
     "test": "vitest run",
@@ -30,6 +30,7 @@
     "@fastify/multipart": "10.1.6",
     "@fastify/rate-limit": "11.2.1",
     "@fastify/static": "10.1.7",
+    "@huggingface/tokenizers": "0.2.0",
     "better-sqlite3": "13.0.3",
     "fastify": "5.12.7",
     "lucide-react": "1.61.0",

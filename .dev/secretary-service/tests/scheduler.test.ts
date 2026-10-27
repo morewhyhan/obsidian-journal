@@ -185,8 +185,9 @@ it("S08 completed habit cancels pending follow-up", async () => {
   await t.scheduler.tick();
   expect(t.sent).toHaveLength(1);
 });
-it("S05 four-message cap and sixty-minute gap apply across distinct items", async () => {
+it("S05 explicit subscriptions have their own budget; optional follow-ups retain the four-message cap and sixty-minute gap", async () => {
   const t = setup("2026-10-23T00:00:00Z");
+  await t.h.core.receive(t.h.input("我在，照常提醒"));
   for (let i = 0; i < 6; i++)
     await t.h.run({
       ...habitAction,
@@ -197,12 +198,27 @@ it("S05 four-message cap and sixty-minute gap apply across distinct items", asyn
   expect(t.sent).toHaveLength(1);
   t.h.advance(59 * 60000);
   await t.scheduler.tick();
-  expect(t.sent).toHaveLength(1);
+  expect(t.sent).toHaveLength(2);
+  t.h.advance(60 * 60000);
+  await t.scheduler.tick();
+  expect(t.sent).toHaveLength(3);
+  t.h.advance(59 * 60000);
+  await t.scheduler.tick();
+  expect(t.sent).toHaveLength(3);
+  t.h.advance(60000);
+  await t.scheduler.tick();
   for (let i = 0; i < 4; i++) {
     t.h.advance(60 * 60000);
     await t.scheduler.tick();
   }
-  expect(t.sent).toHaveLength(4);
+  expect(t.sent).toHaveLength(6);
+  expect(
+    t.h.store.db
+      .prepare(
+        "SELECT count(*) n FROM outbox WHERE message_kind='follow_up' AND status='sent'",
+      )
+      .get(),
+  ).toMatchObject({ n: 4 });
 });
 it("S02 rescheduling an unsent plan refreshes the window without resetting the reminder key", async () => {
   const t = setup();
@@ -329,7 +345,9 @@ it("S06 restart with ten expired candidates sends only a current valid opportuni
   expect(t.sent).toHaveLength(1);
   expect(
     t.h.store.db
-      .prepare("SELECT count(*) AS n FROM outbox WHERE status='expired'")
+      .prepare(
+        "SELECT count(*) AS n FROM outbox,json_each(outbox.target_refs_json) WHERE outbox.status='expired'",
+      )
       .get(),
   ).toMatchObject({ n: 10 });
 });

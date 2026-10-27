@@ -14,7 +14,7 @@ COPY resources/ resources/
 RUN npm run build
 
 FROM ${NODE_IMAGE} AS runtime
-RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client ca-certificates util-linux && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build --chown=node:node /app/package*.json ./

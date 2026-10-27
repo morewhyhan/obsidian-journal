@@ -1,0 +1,8 @@
+{
+  "source": "https://raw.githubusercontent.com/deepseek-ai/deepseek-recipe/935817c66f5d6e64838f419692545f06787e485f/static/tokenizers/v41/tokenizer.json",
+  "sha256": "81f64d1248a68ce3663e07ab3ee48b851e5df0e32d27cb98e4c9a268151e8d99",
+  "model": "deepseek-flash",
+  "observed_provider": "DeepSeek-V4.1-Flash-1017",
+  "license": "MIT",
+  "verified_date": "2026-10-27"
+}

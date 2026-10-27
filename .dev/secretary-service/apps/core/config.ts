@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import { AppError } from "../../packages/contracts/types.js";
 import { VaultFiles } from "./files.js";
 import { AGENT_TOOL_NAMES } from "../../packages/contracts/agent-tools.js";
+import type { PlanningSettings } from "../../packages/contracts/types.js";
+import { validatePlanningSettings } from "../../packages/domain/planning.js";
 function locateProject() {
   let current = path.dirname(fileURLToPath(import.meta.url));
   while (
@@ -18,9 +20,7 @@ function locateProject() {
 export const projectRoot = locateProject();
 export const resource = (name: string) =>
   path.join(projectRoot, "resources", name);
-export function qqConfiguration(
-  env: Record<string, string | undefined>,
-) {
+export function qqConfiguration(env: Record<string, string | undefined>) {
   if (env.SECRETARY_QQ_ENABLED !== "1") return "disabled_or_missing";
   if (env.SECRETARY_ASTRBOT_URL && env.SECRETARY_BRIDGE_TOKEN)
     return env.SECRETARY_RECIPIENT && env.SECRETARY_QQ_BOT_ID
@@ -34,6 +34,8 @@ function defaults() {
     fs.readFileSync(resource("config.default.json"), "utf8"),
   ) as {
     schema_version: number;
+    tasks: { auto_reschedule_flexible_work_blocks: boolean };
+    planning: PlanningSettings;
     timezone: string;
     storage: { database: string; registry: string; day_records: string };
     notifications: {
@@ -44,6 +46,7 @@ function defaults() {
       per_plan_reminder_cap: number;
       follow_up_after_minutes: number;
       recent_engagement_hours: number;
+      habit_follow_up_requires_recent_engagement: boolean;
       delivery_retry_cap: number;
       delivery_retry_delays_seconds: number[];
     };
@@ -65,11 +68,14 @@ function defaults() {
       max_attachment_bytes: number;
     };
     channel: {
+      accept_window_seconds:number;
+      future_skew_seconds:number;
       enabled: boolean;
       max_input_bytes: number;
       send_timeout_seconds: number;
     };
     agent: {
+      budget: { request_input_tokens:number;request_output_tokens:number;daily_requests:number;daily_tokens:number };
       provider: string;
       allowed_tools: string[];
       interpret_timeout_seconds: number;
@@ -100,6 +106,11 @@ export function loadConfig(vault: string) {
     const override = JSON.parse(fs.readFileSync(p, "utf8"));
     merge(cfg, override);
   }
+  validatePlanningSettings(cfg.planning);
+  for(const [key,value] of Object.entries(cfg.agent.budget))
+    if(!Number.isSafeInteger(value)||value<1||value>10000000)throw new AppError("CONFIG_INVALID","模型预算无效："+key,500);
+  if (typeof cfg.tasks.auto_reschedule_flexible_work_blocks !== "boolean")
+    throw new AppError("CONFIG_INVALID", "自动改期必须是开关", 500);
   if (
     !["Asia/Shanghai", "UTC"].includes(cfg.timezone) &&
     !Intl.supportedValuesOf("timeZone").includes(cfg.timezone)
@@ -133,9 +144,12 @@ export function loadConfig(vault: string) {
   )
     throw new AppError("CONFIG_INVALID", "静默和清理时刻无效", 500);
   for (const [value, min, max] of [
+    [cfg.channel.accept_window_seconds,60,1800],
+    [cfg.channel.future_skew_seconds,0,120],
     [cfg.notifications.daily_proactive_message_cap, 0, 4],
     [cfg.notifications.minimum_gap_minutes, 60, 1440],
     [cfg.notifications.follow_up_after_minutes, 90, 1440],
+    [cfg.notifications.per_plan_reminder_cap, 0, 4],
     [cfg.notifications.delivery_retry_cap, 0, 2],
     [cfg.scheduler.tick_seconds, 1, 30],
     [cfg.scheduler.delivery_lease_seconds, 30, 300],
@@ -167,6 +181,7 @@ export function loadConfig(vault: string) {
 }
 function merge(target: any, source: any) {
   for (const [k, v] of Object.entries(source)) {
+    if(!(k in target))throw new AppError("CONFIG_INVALID","未知配置字段："+k,500);
     if (["__proto__", "constructor", "prototype"].includes(k))
       throw new Error("Unsafe config key");
     if (
@@ -230,14 +245,16 @@ export function validateProductionSettings(settings: {
   }
   if (settings.env.LLM_BASE_URL) {
     const provider = parse(settings.env.LLM_BASE_URL);
+    const hosts=(settings.env.LLM_ALLOWED_HOSTS??"api.deepseek.com").split(",").map(x=>x.trim().toLowerCase());
     if (
       provider.protocol !== "https:" ||
+      !hosts.includes(provider.hostname.toLowerCase()) ||
       provider.username ||
       provider.password ||
       provider.search ||
       provider.hash
     )
-      invalid("生产模型接口需要固定的HTTPS地址，凭据单独配置");
+      invalid("生产模型接口需要固定且位于LLM_ALLOWED_HOSTS的HTTPS地址，凭据单独配置");
   }
   if (settings.env.SECRETARY_QQ_ENABLED === "1") {
     if (

@@ -43,6 +43,14 @@ it("invalid result never replays an agent request that might already have writte
   ).rejects.toMatchObject({ code: "AGENT_INVALID" });
   expect(fetch).toHaveBeenCalledTimes(1);
 });
+it("failure diagnostics keep safe categories without replay or arbitrary server error text", async () => {
+  const fetch=vi.fn().mockResolvedValue(new Response(JSON.stringify({error:{code:"AGENT_INVALID",reason:"ValueError",message:"PRIVATE_TOKEN_AND_NOTES"}}),{status:503}));
+  vi.stubGlobal("fetch",fetch);
+  const error=await new AstrBotClient("http://astrbot","token").interpret(input,{}).catch(e=>e);
+  expect(error).toMatchObject({code:"AGENT_INVALID",details:{reason:"ValueError"}});
+  expect(error.message).not.toContain("PRIVATE");
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
 it("configured call and compose limits reach the adapter and startup waits for health", async () => {
   const bodies: any[] = [];
   const fetch = vi.fn(async (url: string, opts: any) => {

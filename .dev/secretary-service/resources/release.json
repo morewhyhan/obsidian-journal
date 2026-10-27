@@ -1,0 +1,393 @@
+{
+  "format": 1,
+  "service_version": "0.1.0",
+  "source_commit": "b3ede22549c86541d10cdb64fd3b8bb879644a4e",
+  "source_commit_is_base_only": true,
+  "source_hash": "sha256:4decd6a91d90d3935bd73734cdb1efdcca05b6188b61e93cca4d698fe412a2a4",
+  "lock_hash": "sha256:b132b39885871620156b6d4236f548edaa2e633edf3ec0af87f41a1b78d718c8",
+  "tools_hash": "sha256:25f0f499a36e456a3129cbfe5fc70ae7d748570350f69bb4a0f36b2408d5eec5",
+  "plugin_version": "1.0.0",
+  "registry_schema": 2,
+  "days_schema": 1,
+  "sql_schema": 1,
+  "calendar_engine": "light-okr-v1",
+  "image_digests": "verified-at-deployment",
+  "files": [
+    {
+      "path": "apps/core/agent-client.ts",
+      "hash": "sha256:9cc733d046e53a7806c241dbf205c59b0a0ad679db9e960e5baec9d7bdf77953"
+    },
+    {
+      "path": "apps/core/agent-runtime.ts",
+      "hash": "sha256:7389e8f519c5aa67fa2bb2d6d4686db867bc27c286cefdc31f308c0213cb27c3"
+    },
+    {
+      "path": "apps/core/app.ts",
+      "hash": "sha256:f55021835aa8ad00ef206f105b01ac1ca9e9e5bf1861fd003531813454e4419e"
+    },
+    {
+      "path": "apps/core/application.ts",
+      "hash": "sha256:e6460c10657efc48d6a68837feb4a7b263dffad2441d35a344c719549361c4a0"
+    },
+    {
+      "path": "apps/core/assistant.ts",
+      "hash": "sha256:38f3a04e0b0ad7b5ca6d3009ae0c2661352534396e91e1ff03fa0030d83b2555"
+    },
+    {
+      "path": "apps/core/astrbot-channel.ts",
+      "hash": "sha256:b7649eb075de12029511aa4966d2f01a80df18df653a8d06cc8da4fd8269cb2a"
+    },
+    {
+      "path": "apps/core/auth.ts",
+      "hash": "sha256:8e881ae4382a77da714fef036a0d32349a9ca211d01e1c92cf19dbb235876c57"
+    },
+    {
+      "path": "apps/core/background-grant.ts",
+      "hash": "sha256:83c7fda85c7c966e7b92015594c62614cff3df6b72c0e6c4ff5efbbeb9baf2fd"
+    },
+    {
+      "path": "apps/core/cli.ts",
+      "hash": "sha256:5c63bdbd06387b52cea4c1e1f6ae658fe0a1fdc28dff812437724a794d377b2a"
+    },
+    {
+      "path": "apps/core/clock.ts",
+      "hash": "sha256:e9fa0e0ae37ca7b28cc79858e9fcbebe82892ee7bc26a38215c40ae3589db334"
+    },
+    {
+      "path": "apps/core/compatibility-runtime.ts",
+      "hash": "sha256:6e8ec3cef9f50c93936ffdf9cee5662d805e880cf3a51a3f0b72892b3c870c03"
+    },
+    {
+      "path": "apps/core/compatibility.ts",
+      "hash": "sha256:4b9b97720e540b8424c02f074837ed3239bca1b5039a4a4afb6dc915267f4174"
+    },
+    {
+      "path": "apps/core/config.ts",
+      "hash": "sha256:1130c6fd334879156f7d2bdfecbc32cf05ed7101fec5735eea33f8e9857122b9"
+    },
+    {
+      "path": "apps/core/conversation.ts",
+      "hash": "sha256:6dd5866c6b261cd126c2598c57c54cad7a554f89183ad39d4a781211b74da8e0"
+    },
+    {
+      "path": "apps/core/coordinator.ts",
+      "hash": "sha256:096aa5c409df265ac21973b37b08129c28b67219cd4dd888ca5f909d0711b759"
+    },
+    {
+      "path": "apps/core/core.ts",
+      "hash": "sha256:9c036e2e5c6a39d67be41f77578cd52f8f89c8272d1c3487d573151f8c1d63c3"
+    },
+    {
+      "path": "apps/core/document-operations.ts",
+      "hash": "sha256:22a7a9132bdd676d2f76bab6854a2471c813250cdd8a979a1fa4f5932fa56371"
+    },
+    {
+      "path": "apps/core/files.ts",
+      "hash": "sha256:f220b1430eaf23af4e01b6fc56e485484a9b9fdf8af1bf8a2fc9ad01892a9f09"
+    },
+    {
+      "path": "apps/core/git.ts",
+      "hash": "sha256:22bfc2944650d5e84e9566a1d8046d8ccea9e4c199646fd0a8c6115081aca6d3"
+    },
+    {
+      "path": "apps/core/journal.ts",
+      "hash": "sha256:ffe9d09a838b8ba83f0de6151a7346040b265c2fd1f90354daf7c4b2041b4985"
+    },
+    {
+      "path": "apps/core/lifecycle.ts",
+      "hash": "sha256:25268f0162d6324e072ce08c359d61b6e651e86821617784bae5859e7396db31"
+    },
+    {
+      "path": "apps/core/log.ts",
+      "hash": "sha256:8659f3a8d179fb33485da2c8cb98ad77721640256cb1e1bf4aecbdf033089d5d"
+    },
+    {
+      "path": "apps/core/main.ts",
+      "hash": "sha256:792cda0c32e4c76dc515be8abbb7a5390b5ec3e917b6866b86116f788157bbc3"
+    },
+    {
+      "path": "apps/core/maintenance.ts",
+      "hash": "sha256:582d55cfa3bcf86b2c13f0b030d004f3fd7937d5ef6e815b4124fa2256d5a66c"
+    },
+    {
+      "path": "apps/core/model-budget.ts",
+      "hash": "sha256:8bf4347663a6bd6e802c7ccf2762037d761565baef0bc0bdd88a18353d7fef13"
+    },
+    {
+      "path": "apps/core/model-job.ts",
+      "hash": "sha256:dd15fa56b4cfbb8d902f31f1507e82226f2c1f7ae16132a5d72d4b5a20ba4827"
+    },
+    {
+      "path": "apps/core/policy.ts",
+      "hash": "sha256:7e1d3b8acfec5118c71ffb346b8376c926d16d38effd263451a564cde4bb3379"
+    },
+    {
+      "path": "apps/core/qq.ts",
+      "hash": "sha256:b091dff8d55a8f241142967144fdca9b7d342caa77019a5f5cf2c3b8d814018a"
+    },
+    {
+      "path": "apps/core/read-stamps.ts",
+      "hash": "sha256:f9bf17aac9d1b48b0d4ff0784316ed5aea109ada722fbff581f31227a127017a"
+    },
+    {
+      "path": "apps/core/recovery-control.ts",
+      "hash": "sha256:e1131275bb5cbd82bb216c19ed7bdb986306e2fd6845a37091186e9da4589740"
+    },
+    {
+      "path": "apps/core/scheduler.ts",
+      "hash": "sha256:e832dbbf19aabd7fabd75cad3fb090676f0747cd3abcb92dc6e949561eb1f364"
+    },
+    {
+      "path": "apps/core/snapshot-backup.ts",
+      "hash": "sha256:5bedaa9f9838cddd151136c1b1a524618d04dc1368dabf4fe06058d9c8cd3e97"
+    },
+    {
+      "path": "apps/core/store.ts",
+      "hash": "sha256:7c14807a668ff5e7a2a19e4d35c50434c8a4ed25dc98d9d9783af831af3ff005"
+    },
+    {
+      "path": "apps/core/token-counter.ts",
+      "hash": "sha256:665b7beab1b7c5d62f1d6a4ba7ad6a6575b102dc1505df898d07c77dbca3a183"
+    },
+    {
+      "path": "apps/core/tool-effects.ts",
+      "hash": "sha256:78b71a200887245d5be5f4966974c99f34130af10a08a11bf82e0da3b19ed03e"
+    },
+    {
+      "path": "apps/core/work-checks.ts",
+      "hash": "sha256:79a270ed8c35b4f5dd37a9731c0e68ebdff8b7e36cfc987ead4cc489a548d4b2"
+    },
+    {
+      "path": "apps/core/work-runner.ts",
+      "hash": "sha256:a7337ce0f404b7c898234588c45949d32f71fac5833b5f0d58b2f3323ecfb1f8"
+    },
+    {
+      "path": "apps/core/workspace.ts",
+      "hash": "sha256:0bbc7ec3be22788340261ce16616823f2ab090ba7246cadf64be63e07ca8be26"
+    },
+    {
+      "path": "apps/web/src/api.ts",
+      "hash": "sha256:bb5f3cd6f07ab30452ab5c3f92cd0cc9ad13c76b7d485a0ea2003b897c65ba20"
+    },
+    {
+      "path": "apps/web/src/Editor.tsx",
+      "hash": "sha256:46606c5f2ec6e02a0e56475bb018ebb0f5f65108fa35a21b234d1efa58b6527f"
+    },
+    {
+      "path": "apps/web/src/main.tsx",
+      "hash": "sha256:8a895ed6a6a9a6952b6e01ea1ffbca05fdeff0238538ec1e09322aab0f536dba"
+    },
+    {
+      "path": "apps/web/src/Preview.tsx",
+      "hash": "sha256:f56c11af376e11ac5e74d299a6c01ec5401ff0efcf91d95f5db36739511419ab"
+    },
+    {
+      "path": "deploy/astrbot-bootstrap.py",
+      "hash": "sha256:b824c25a98e78429685ba8e81af7bfd120c63f62a9514a66f3d0b0fa2c6fe407"
+    },
+    {
+      "path": "deploy/compose.backup.yaml",
+      "hash": "sha256:a5a60421e6be3a01ec7a35668a49ebd879de5a7a8acacd1ad29ebd0694d7bf57"
+    },
+    {
+      "path": "deploy/compose.yaml",
+      "hash": "sha256:9291ac295ac4926039cd9d180056941b57dc5e35e7938998d6577cd1193602e6"
+    },
+    {
+      "path": "deploy/napcat-entrypoint.sh",
+      "hash": "sha256:9917b9e20bf5fa34a8a33c189c48f1819b751e70b3433937b9bf8573d298c394"
+    },
+    {
+      "path": "integrations/astrbot/astrbot_plugin_secretary/bridge.py",
+      "hash": "sha256:96f30997c1e5e3e648e96222edd9b8150b005321e67229a25f07b663afe2e49e"
+    },
+    {
+      "path": "integrations/astrbot/astrbot_plugin_secretary/main.py",
+      "hash": "sha256:063740f90dc5f8aadf3fd3d5cf920d11adbabb0b08288082aa932c718a45c977"
+    },
+    {
+      "path": "integrations/astrbot/astrbot_plugin_secretary/metadata.yaml",
+      "hash": "sha256:90e7977f1294ff3fa9c2aea97e01c56e2ba32104f636fcf8797aada427956afc"
+    },
+    {
+      "path": "integrations/astrbot/astrbot_plugin_secretary/model_contract.py",
+      "hash": "sha256:5dbddc371a6881ec37eea015163061413e9be20001a0e0bf1bf8b8b3fcd3eb56"
+    },
+    {
+      "path": "integrations/astrbot/astrbot_plugin_secretary/tools.json",
+      "hash": "sha256:292525a1f7e9f693182e895d3dec698ee947d58b279e77559648b30327b03b99"
+    },
+    {
+      "path": "packages/calendar/index.ts",
+      "hash": "sha256:800b2ffb1be3db0668360cba8fb057215c28750c72ac5aca503c3102ad7f101f"
+    },
+    {
+      "path": "packages/contracts/action-fields.ts",
+      "hash": "sha256:be7d0a9fb392209cfc69ed4cb1f9ade0e2ba7f358d18c7b6c6a8760a206d2d91"
+    },
+    {
+      "path": "packages/contracts/agent-tools.ts",
+      "hash": "sha256:378a7cd119c48b187630728caada54383766774ddb03a13ca350b2bacff8cc7d"
+    },
+    {
+      "path": "packages/contracts/api.ts",
+      "hash": "sha256:c0c50c7753c3aafc3fbe305081c81b8977f80041a9ff2d9305a7805c5925447e"
+    },
+    {
+      "path": "packages/contracts/markdown.ts",
+      "hash": "sha256:b5215280bb3bfb2aa23b768380d6c78ffae29a54583a872cda5441c63597b9ba"
+    },
+    {
+      "path": "packages/contracts/openapi.json",
+      "hash": "sha256:314c8b93ad030d4ee937ea186e872e860f0ae184f5bcf6b21ef900d07ef38304"
+    },
+    {
+      "path": "packages/contracts/schemas.json",
+      "hash": "sha256:d463e2bb34f8e4135242adca581b41ed1d529229ca65994f627aad0d7d22ddfb"
+    },
+    {
+      "path": "packages/contracts/types.ts",
+      "hash": "sha256:0c308c8824ae3cd89e44d1fb8da951712f4085fcce837ad5c2f145ad615ac5d4"
+    },
+    {
+      "path": "packages/contracts/vendor.d.ts",
+      "hash": "sha256:8dc66e39da570d6ddcabb62bc7136c80db6777d5b0886018a135eedc5aea77d6"
+    },
+    {
+      "path": "packages/contracts/work.ts",
+      "hash": "sha256:1053a118f976118b34a77ae3e830e0e95ce6440150b23833a9f2c540ef17fb4e"
+    },
+    {
+      "path": "packages/domain/actions.ts",
+      "hash": "sha256:aa735bf96bf6a515a7d753e6a3a58075d9aceeba332a414308d16bc89ab74253"
+    },
+    {
+      "path": "packages/domain/assistant.ts",
+      "hash": "sha256:73112432a6276caa831f0ce0491a7c54599319a05a2b92ea3547eddaf6271280"
+    },
+    {
+      "path": "packages/domain/decisions.ts",
+      "hash": "sha256:84203c1804f1548e3ed9c710a900684e08a29bf50374104aa64df73a02748b87"
+    },
+    {
+      "path": "packages/domain/followups.ts",
+      "hash": "sha256:3e1f12f9ea1607675e570adc1706a05fd3362aa45134191bc3b329bd0ac19b50"
+    },
+    {
+      "path": "packages/domain/planning.ts",
+      "hash": "sha256:e44399cf4dc21c03d3c59c8f76bbf1fe2a50c07a3483e04c21d18315d3c0b2d5"
+    },
+    {
+      "path": "packages/domain/retention.ts",
+      "hash": "sha256:9faf783bb942bba0a79b210a68100d19169277c785454c4527105d2b3967ecd2"
+    },
+    {
+      "path": "packages/domain/scheduling.ts",
+      "hash": "sha256:dff2786e5ebdf1c24257e3c40d4da1240d24857d0986c10f1439935434e24d30"
+    },
+    {
+      "path": "packages/domain/work.ts",
+      "hash": "sha256:7f5be38a9fc36406327adb06eebf0de634cd5284c89b9df98b01d55994fd80fe"
+    },
+    {
+      "path": "packages/shared/identity.ts",
+      "hash": "sha256:5cc70b2af1f606b56d02e54913d0e7e47ffa9eddbe15bafa8750d32a1a042149"
+    },
+    {
+      "path": "resources/config.default.json",
+      "hash": "sha256:046493fbf6ab31950fcfc6360cb9d917cde44b499df34d05eac630f33b085287"
+    },
+    {
+      "path": "resources/prompts/execution.md",
+      "hash": "sha256:e5b9c9ec5121406ce675bc5c3f33f1fb95d96478bbc6a0153987613a86524676"
+    },
+    {
+      "path": "resources/prompts/persona.md",
+      "hash": "sha256:b5c8444e223ed1cc935775c61d1912b6803d13b9a9f942ae14e9570c15fb3589"
+    },
+    {
+      "path": "resources/prompts/system.md",
+      "hash": "sha256:4e732dd51ed7c201a785272c9f73b7e53db7b7eef2a2f5626c066f39f6300a97"
+    },
+    {
+      "path": "resources/prompts/workflows.md",
+      "hash": "sha256:fea4e04595fe7a57086e1caa2798d997ff3ffc746edcf6993804f1f3eecf039a"
+    },
+    {
+      "path": "resources/schema.sql",
+      "hash": "sha256:38f1aee3574e235a114db3d67646fd8ffbfd5d0a88cbb7a003acd220fab134a2"
+    },
+    {
+      "path": "resources/templates/季度计划模版.md",
+      "hash": "sha256:6846ff6c32440b9c658f2e4e8585aa2c426b7818f8f8f4b333bc3a9f54f9c149"
+    },
+    {
+      "path": "resources/templates/年度反思模版.md",
+      "hash": "sha256:7f947d8431199123d6b195ab8155033de1acefbcc8f4d129a185112b6fad9f38"
+    },
+    {
+      "path": "resources/templates/日记模版.md",
+      "hash": "sha256:a14a0cff2c2a108a406772744e28eaa5c3b86a5072df3194af91a2abc6d95118"
+    },
+    {
+      "path": "resources/templates/月度反思模版.md",
+      "hash": "sha256:e32bfb0501fb5ac0d43ed14ec0813cd67efd2c629887caa82d52800e1531917e"
+    },
+    {
+      "path": "resources/templates/周记模版.md",
+      "hash": "sha256:8c883f7e3dbbc0c46ee869d6c89b15d7d5c199fb9e344f45853f4b840a52638a"
+    },
+    {
+      "path": "resources/tokenizer/deepseek-v41.json",
+      "hash": "sha256:81f64d1248a68ce3663e07ab3ee48b851e5df0e32d27cb98e4c9a268151e8d99"
+    },
+    {
+      "path": "resources/tokenizer/provenance.json",
+      "hash": "sha256:772547a7bffa060f81a56003b3138db1969380844872a243151e733e12fd5b51"
+    },
+    {
+      "path": "scripts/check-deployment.py",
+      "hash": "sha256:62dd025e855e8a1360b7ff54d605f4197e5dfba5e53a01d4b035db9e0fa83bb5"
+    },
+    {
+      "path": "scripts/compatibility.ts",
+      "hash": "sha256:c1c8cee007d6af378227b2928d5f46768b535b59df56592bb090a0ed63aeaaca"
+    },
+    {
+      "path": "scripts/contracts.ts",
+      "hash": "sha256:ec5efa1f1efb94b0a1653185ea4032d6293ddf5f5ede38ea1752989ff969a35f"
+    },
+    {
+      "path": "scripts/evaluate-astrbot.py",
+      "hash": "sha256:18967b9ce3042a6b0d797b2f910e1f4db18a3d0b3ad8e491e8a5f9a82a5f6b07"
+    },
+    {
+      "path": "scripts/evaluate-model.py",
+      "hash": "sha256:56a7411e6e8011fb82fa8a46d45a94289fe5ec5532698c5cc418a43eddfa3df7"
+    },
+    {
+      "path": "scripts/fixture.ts",
+      "hash": "sha256:8f740aa3ca53a011de46c27b84c49be3a2517b5b069d6b6c1d945b31687a1c11"
+    },
+    {
+      "path": "scripts/linux-performance.sh",
+      "hash": "sha256:ea5df5fab1b00984a1bb308c98c48d9177bc4539bce636273d9837dc0a5b22ae"
+    },
+    {
+      "path": "scripts/linux-validation.sh",
+      "hash": "sha256:f1c072386a595900fe05b5b8caf1e9df935f70f26e6a1eecba2536e548c18990"
+    },
+    {
+      "path": "scripts/password.ts",
+      "hash": "sha256:bf158d2319bd74a60d3a51750c2710931c15be6e2f25e5e16304a760f24716b2"
+    },
+    {
+      "path": "scripts/performance.ts",
+      "hash": "sha256:c74a1ead050112217e00042856702050930276d5c42ca67cafaef78f7f276c9f"
+    },
+    {
+      "path": "scripts/release.ts",
+      "hash": "sha256:14bfcdf57ff7bf0be244762e26602ae76f7ee87c8ff5f1e6ddaccad15af22bc8"
+    }
+  ]
+}

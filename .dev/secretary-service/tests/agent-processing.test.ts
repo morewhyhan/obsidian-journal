@@ -30,6 +30,45 @@ it("P02 an exploratory wish becomes a proposal and is accepted atomically only o
   expect(h.store.registry().habits).toHaveLength(1);
   expect(h.store.registry().proposals[0].status).toBe("accepted");
 });
+it("bare approval never guesses between multiple pending proposals, while an explicit batch accepts both", async () => {
+  const h = harness();
+  cleanups.push(() => h.close());
+  h.core.agent = {
+    interpret: async (input) => ({
+      action_groups: [
+        {
+          action_identity: input.text,
+          actions: [
+            {
+              ...habitAction,
+              title: input.text,
+            },
+          ],
+        },
+      ],
+      clarification: null,
+      reply_intent: "proposal",
+      summary: "给你一份待确认安排",
+    }),
+  };
+  for (const text of [
+    "我是不是应该每天读安排A？",
+    "我是不是应该每天读安排B？",
+  ]) {
+    const input = h.input(text);
+    await h.core.receive(input);
+    await expect
+      .poll(() => h.store.db.prepare("SELECT status FROM inbox WHERE id=?").get(input.id))
+      .toMatchObject({ status: "processed" });
+  }
+  expect(h.store.registry().proposals).toHaveLength(2);
+  await h.core.receive(h.input("好"));
+  expect(h.store.registry().proposals.every((p) => p.status === "pending")).toBe(true);
+  expect(h.store.registry().habits).toHaveLength(0);
+  await h.core.receive(h.input("这些都提交"));
+  expect(h.store.registry().proposals.every((p) => p.status === "accepted")).toBe(true);
+  expect(h.store.registry().habits).toHaveLength(2);
+});
 it("explicit Chinese create and set commands execute instead of creating a pending proposal", async () => {
   for (const text of [
     "帮我新建一个任务，2分钟后提醒我",
@@ -207,8 +246,10 @@ it("A02 note instructions cannot authorize a completion while the user requests 
       summary: "候选动作",
     }),
   };
-  await h.core.receive(h.input("分析这篇笔记"));
-  await expect.poll(() => h.store.registry().proposals.length).toBe(1);
+  const input = h.input("分析这篇笔记");
+  await h.core.receive(input);
+  await expect.poll(() => h.store.db.prepare("SELECT status FROM inbox WHERE id=?").get(input.id)).toMatchObject({ status: "processed" });
+  expect(h.store.registry().proposals).toHaveLength(0);
   expect(h.store.day("2026-10-23").occurrences).toHaveLength(0);
 });
 it("a model action without the context version is rejected and reported per group", async () => {

@@ -23,6 +23,123 @@ async function create(page: Page, content: string) {
   ).toBeVisible();
   return path;
 }
+test("assistant rules, focus controls and hourly opt-in use the same Core on phone and desktop", async ({
+  page,
+}) => {
+  await login(page);
+  await page.goto("/items");
+  await page.getByRole("button", { name: "开始专注 · 25/5分钟 × 4轮" }).click();
+  await expect(
+    page.getByRole("button", { name: "暂停计时", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "暂停计时", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "继续计时", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "继续计时", exact: true }).click();
+  await page.getByRole("button", { name: "停止计时", exact: true }).click();
+  await page.getByText("规则与自动化", { exact: true }).click();
+  await page.getByLabel("晚间规划时间").fill("20:00");
+  await page.getByRole("button", { name: "保存规划时间", exact: true }).click();
+  await expect
+    .poll(async () => {
+      const body = await (await page.request.get("/api/v1/items")).json();
+      return body.assistant.planning.evening_time;
+    })
+    .toBe("20:00");
+  await page.getByRole("button", { name: "设置小时回顾", exact: true }).click();
+  await page.getByRole("button", { name: "启用小时回顾", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "关闭回顾", exact: true }),
+  ).toBeVisible();
+  for (const width of [1440, 375]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBeTruthy();
+  }
+  await page.getByRole("button", { name: "关闭回顾", exact: true }).click();
+  await page
+    .getByRole("button", { name: "暂停联系1小时", exact: true })
+    .click();
+  const paused = await (await page.request.get("/api/v1/items")).json();
+  expect(
+    paused.controls.some(
+      (c: any) => c.scope === "global" && Date.parse(c.ends_at) > Date.now(),
+    ),
+  ).toBe(true);
+  await page.getByRole("button", { name: "恢复联系", exact: true }).click();
+});
+test("planning displays tomorrow's real agenda, preserves mobile layout and closes reminders on completion", async ({
+  page,
+}) => {
+  await login(page);
+  const home = await (await page.request.get("/api/v1/home")).json();
+  const date = new Date(home.date + "T12:00:00Z");
+  date.setUTCDate(date.getUTCDate() + 1);
+  const tomorrow = date.toISOString().slice(0, 10);
+  const current = await (await page.request.get("/api/v1/items")).json();
+  const command = async (data: object) => {
+    const response = await page.request.post("/api/v1/commands", {
+      headers: {
+        Origin: "http://127.0.0.1:3187",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      data,
+    });
+    expect(response.ok(), await response.text()).toBeTruthy();
+    return response.json();
+  };
+  await command({
+    type: "set_planning",
+    expected_planning_version: current.planning.version,
+    preferences: {
+      day_overrides: [
+        { date: tomorrow, windows: [{ start: "10:00", end: "12:00" }] },
+      ],
+    },
+  });
+  const title = "浏览器排程" + crypto.randomUUID().slice(0, 6);
+  const created = await command({
+    type: "create_task",
+    title,
+    outcome: "完成测试提纲",
+    acceptance: [{ kind: "check", description: "提纲完成" }],
+    planning: { next_action: "写测试提纲", remaining_minutes: 30 },
+  });
+  await command({ type: "plan_day", business_date: tomorrow });
+  await page.goto("/items");
+  const agenda = page.locator("section.agenda").filter({
+    has: page.getByRole("heading", { name: "明天的安排", exact: true }),
+  });
+  await expect(agenda.getByText("写测试提纲", { exact: true })).toBeVisible();
+  for (const width of [1440, 375]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBeTruthy();
+  }
+  await page
+    .getByRole("button", { name: "完成任务：" + title, exact: true })
+    .click();
+  await expect
+    .poll(async () => {
+      const items = await (await page.request.get("/api/v1/items")).json();
+      return items.tasks.find((t: any) => t.id === created.updated_ids[0])
+        .status;
+    })
+    .toBe("done");
+  const updated = await (await page.request.get("/api/v1/items")).json();
+  expect(
+    updated.tomorrow.plans.some(
+      (p: any) => p.target_ref.id === created.updated_ids[0],
+    ),
+  ).toBe(false);
+});
 test("U01 desktop, tablet and phone render usable navigation without horizontal overflow", async ({
   page,
 }) => {

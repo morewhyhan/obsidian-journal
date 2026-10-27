@@ -1,8 +1,17 @@
 import { DateTime } from "luxon";
 import type { Registry } from "../../packages/contracts/types.js";
 import { localDate } from "../../packages/calendar/index.js";
-import { hash, id } from "./files.js";
+import { hash, id, canonicalJson } from "./files.js";
 import type { Core } from "./core.js";
+import { effectivePolicy } from "./policy.js";
+import { followupKey } from "../../packages/domain/followups.js";
+import { planningSettings } from "../../packages/domain/planning.js";
+import {
+  currentFocus,
+  inQuiet,
+  quietHours,
+  ruleValue,
+} from "../../packages/domain/assistant.js";
 export interface Channel {
   send(message: {
     id: string;
@@ -17,15 +26,28 @@ export interface Channel {
 }
 type Candidate = {
   id: string;
-  target: { kind: "habit" | "task"; id: string; business_date?: string };
+  target: {
+    kind: "habit" | "task" | "planning" | "automation" | "focus" | "work";
+    id: string;
+    business_date?: string;
+    occurrence_id?: string;
+  };
+  noticeBody?: string;
+  questionId?: string;
   version: number;
   targetVersion: number;
   start: string;
   end: string;
   text: string;
   due: string | null;
+  contactClass?: "subscription" | "suggestion";
+  quietException?: boolean;
+  members?: Candidate[];
 };
 export class Scheduler {
+  private languageTask?:Promise<void>;
+  private language = new Map<string, string>();
+  private languageRetryAfter = new Map<string, number>();
   busy = false;
   lastTick: string | null = null;
   lastError: string | null = null;
@@ -38,14 +60,12 @@ export class Scheduler {
     public recipient: string,
   ) {}
   private quiet() {
-    const { config, clock } = this.core.store,
-      time = DateTime.fromJSDate(clock(), { zone: config.timezone }).toFormat(
-        "HH:mm",
-      ),
-      q = config.notifications.quiet_hours;
-    return q.start > q.end
-      ? time >= q.start || time < q.end
-      : time >= q.start && time < q.end;
+    const s = this.core.store;
+    return inQuiet(
+      s.now(),
+      s.config.timezone,
+      quietHours(s.registry(), s.config.notifications.quiet_hours, s.now()),
+    );
   }
   private paused(r: Registry, target: string) {
     const now = this.core.store.now();
@@ -61,6 +81,8 @@ export class Scheduler {
       date = localDate(store.clock(), store.config.timezone),
       now = store.now(),
       items: Candidate[] = [];
+    const planning = planningSettings(r, store.config.planning, now);
+    const focus = currentFocus(r, (d) => store.day(d));
     for (const p of r.plans.filter((x) =>
       ["planned", "active"].includes(x.status),
     )) {
@@ -70,7 +92,19 @@ export class Scheduler {
           : r.tasks.find((x) => x.id === p.target_ref.id);
       if (
         !target?.approval ||
-        !["active", "ready", "in_progress", "blocked"].includes(target.status)
+        (p.target_ref.kind === "habit" &&
+          "reminder_mode" in target &&
+          target.reminder_mode === "off") ||
+        !["active", "ready", "in_progress"].includes(target.status) ||
+        p.needs_replan ||
+        ("progress" in target && target.progress.verification_pending) ||
+        ("planning" in target &&
+          target.planning &&
+          ((target.planning.focus_until && target.planning.focus_until > now) ||
+            target.planning.depends_on.some(
+              (dep) => r.tasks.find((t) => t.id === dep)?.status !== "done",
+            ) ||
+            target.planning.postponements >= planning.postponement_threshold))
       )
         continue;
       items.push({
@@ -80,14 +114,29 @@ export class Scheduler {
         targetVersion: target.version,
         start: p.window_start,
         end: p.window_end,
-        text: p.next_action,
+        text:
+          p.next_action +
+          this.core.coordinator
+            .preparation(p)
+            .map(
+              (ref) =>
+                "（[[" +
+                ref.path.replace(/\.md$/, "") +
+                (ref.heading ? "#" + ref.heading : "") +
+                "]]）",
+            )
+            .join(""),
         due: "due_at" in target ? target.due_at : null,
+        contactClass: "subscription",
       });
     }
     // A window can cross midnight; the opportunity still belongs to its start date.
     for (const h of r.habits.filter(
       (x) =>
-        x.status === "active" && x.approval && x.anchor.kind === "time_window",
+        x.status === "active" &&
+        x.approval &&
+        x.anchor.kind === "time_window" &&
+        (x.reminder_mode ?? "window") === "window",
     )) {
       for (const businessDate of [
         DateTime.fromISO(date).minus({ days: 1 }).toISODate()!,
@@ -126,11 +175,16 @@ export class Scheduler {
           end: (end <= start ? end.plus({ days: 1 }) : end).toUTC().toISO()!,
           text: h.min_behavior,
           due: null,
+          contactClass: "subscription",
         });
       }
     }
     for (const h of r.habits.filter(
-      (x) => x.status === "active" && x.approval && x.anchor.kind === "event",
+      (x) =>
+        x.status === "active" &&
+        x.approval &&
+        x.anchor.kind === "event" &&
+        (x.reminder_mode ?? "window") === "window",
     )) {
       const occurred = store
         .day(date)
@@ -162,13 +216,107 @@ export class Scheduler {
           .toISO()!,
         text: h.min_behavior,
         due: null,
+        contactClass: "subscription",
       });
     }
-    return items
+    for(const f of r.followups??[]) {
+      if(!f.work || f.work.owner!=="user" || f.status!=="waiting_user" || f.next_check_at && f.next_check_at>now)continue;
+      const question=followupKey(f,now);
+      if(f.asked_keys.includes(question) || f.asked_keys.length>=2 || r.controls.some(c=>c.starts_at<=now && c.ends_at>now &&
+        (c.scope==="global" || c.target_id===f.id || f.work!.refs?.some(ref=>ref.id===c.target_id))))continue;
+      items.push({id:"work-notice:"+question,target:{kind:"work",id:f.id},version:1,targetVersion:1,
+        start:f.next_check_at??f.updated_at,end:DateTime.fromISO(f.next_check_at??f.updated_at).plus({days:1}).toUTC().toISO()!,
+        text:f.work.next_action,noticeBody:f.work.summary+"；"+f.work.next_action,questionId:question,
+        due:f.next_check_at??f.updated_at,contactClass:"suggestion"});
+    }
+    for (const notice of this.core.coordinator.notices())
+      items.push({
+        id: notice.id,
+        target: { kind: "planning", id: notice.id, business_date: notice.date },
+        version: notice.version,
+        targetVersion: notice.version,
+        start: notice.start,
+        end: notice.end,
+        text: notice.body,
+        noticeBody: notice.body,
+        questionId: notice.questionId,
+        due: notice.start,
+        contactClass: notice.id.includes("planning:night:")
+          ? "subscription"
+          : "suggestion",
+      });
+    for (const o of this.core.assistant.occurrences()) {
+      const a =
+        o.kind === "automation"
+          ? r.automations?.find((x) => x.id === o.automation_id)
+          : focus;
+      if (
+        o.status !== "scheduled" ||
+        !a ||
+        a.version !== o.version ||
+        o.report ||
+        ("last_attempted_at" in a &&
+          a.last_attempted_at &&
+          o.due_at <= a.last_attempted_at) ||
+        ("status" in a && ["paused", "retired", "cancelled"].includes(a.status))
+      )
+        continue;
+      if (
+        o.kind === "automation" &&
+        "kind" in a &&
+        ["hourly_checkin", "status_check"].includes(a.kind) &&
+        !("strict" in a && a.strict) &&
+        focus?.status === "active" &&
+        focus.phase === "working" &&
+        ruleValue(r, "contact.focus_protection", true, now)
+      )
+        continue;
+      if (
+        o.kind === "automation" &&
+        "kind" in a &&
+        a.kind === "status_check" &&
+        (o.checkin_status === "skip" || (this.core.agent && !o.checkin_status))
+      )
+        continue;
+      const check =
+        o.kind === "automation" && "kind" in a && a.kind === "status_check"
+          ? this.core.assistant.knownBusy()
+            ? null
+            : { body: o.checkin_status === "ready" ? o.body : a.body }
+          : undefined;
+      if (check === null) continue;
+      items.push({
+        id: "occ:" + o.slot_key,
+        target: {
+          kind: o.kind,
+          id: o.automation_id,
+          business_date: o.business_date,
+          occurrence_id: o.id,
+        },
+        version: o.version,
+        targetVersion: o.version,
+        start: o.due_at,
+        end: o.expires_at,
+        text: check?.body ?? o.body,
+        noticeBody: check?.body ?? o.body,
+        due: o.due_at,
+        contactClass: "subscription",
+        quietException: o.quiet_exception,
+      });
+    }
+    const available = items
       .filter(
         (x) =>
           x.start <= now &&
           x.end > now &&
+          !(
+            focus?.status === "active" &&
+            focus.phase === "working" &&
+            ruleValue(r, "contact.focus_protection", true, now) &&
+            (x.target.kind === "habit" ||
+              (x.target.kind === "task" &&
+                r.plans.find((p) => p.id === x.id)?.kind !== "fixed"))
+          ) &&
           !this.paused(r, x.target.id) &&
           !(
             x.target.kind === "habit" &&
@@ -185,48 +333,205 @@ export class Scheduler {
           a.start.localeCompare(b.start) ||
           a.id.localeCompare(b.id),
       );
+    const groups = new Map<string, Candidate[]>();
+    for (const c of available) {
+      // An exact user-specified message must not depend on another item's LLM composition.
+      if(this.literal(c)!==null)continue;
+      if (c.contactClass !== "subscription" || !this.permitted(c.target.id, c))
+        continue;
+      const occupied = store.db
+        .prepare(
+          "SELECT 1 FROM outbox o,json_each(o.source_versions_json) v WHERE v.key=? AND o.status IN ('sent','sending','unknown','abandoned') LIMIT 1",
+        )
+        .get(c.id);
+      if (occupied) continue;
+      const key =
+        c.start.slice(0, 16) +
+        ":" +
+        (this.quiet() ? !!c.quietException : "awake");
+      const group = groups.get(key) ?? [];
+      group.push(c);
+      groups.set(key, group);
+    }
+    const merged = new Set<string>(),
+      output: Candidate[] = [];
+    for (const group of groups.values())
+      for (let n = 0; n < group.length; n += 3) {
+        const part = group.slice(n, n + 3);
+        if (
+          part.length < 2 ||
+          part.map((c) => this.body(c)).join("\n").length > 1800
+        )
+          continue;
+        part.forEach((c) => merged.add(c.id));
+        output.push({
+          ...part[0],
+          id:
+            "merged:" +
+            hash(
+              part
+                .map((c) => c.id)
+                .sort()
+                .join("|"),
+            ),
+          members: part,
+          noticeBody: part.map((c) => this.body(c)).join("\n"),
+          end: part.map((c) => c.end).sort()[0],
+        });
+      }
+    return [...available.filter((c) => !merged.has(c.id)), ...output].sort(
+      (a, b) =>
+        (a.due ?? "9999").localeCompare(b.due ?? "9999") ||
+        a.id.localeCompare(b.id),
+    );
   }
-  private permitted(targetId: string) {
+  private permitted(targetId: string, candidate?: Candidate) {
     const store = this.core.store;
     return (
+      effectivePolicy(store).capabilities.contact &&
+      store.state.acceptsBackground() &&
       !this.paused(store.registry(), targetId) &&
-      !this.quiet() &&
+      (!this.quiet() || !!candidate?.quietException) &&
       (!store.recoveryUntil || store.recoveryUntil <= store.now())
     );
   }
-  private budget() {
+  private budget(
+    candidate?: Candidate,
+    subscription = candidate?.contactClass === "subscription",
+  ) {
     const { store } = this.core,
       now = store.clock(),
       date = localDate(now, store.config.timezone);
     let count = 0,
-      last = "";
+      last = "",
+      lastAny = "",
+      subscriptions = 0;
     for (const row of store.db
-      .prepare("SELECT attempts_json FROM outbox WHERE counts_as_proactive=1")
+      .prepare(
+        "SELECT attempts_json,source_versions_json FROM outbox WHERE counts_as_proactive=1",
+      )
       .all() as any[]) {
       const occupied = (JSON.parse(row.attempts_json) as any[]).filter((x) =>
         ["sending", "sent", "unknown"].includes(x.result),
       );
-      if (occupied.some((x) => x.business_date === date)) count++;
-      for (const a of occupied) if (a.at > last) last = a.at;
+      const isSubscription =
+        JSON.parse(row.source_versions_json)["contact:subscription"] === 1;
+      if (occupied.some((x) => x.business_date === date)) {
+        if (isSubscription) subscriptions++;
+        else count++;
+      }
+      for (const a of occupied) {
+        if (a.at > lastAny) lastAny = a.at;
+        if (!isSubscription && a.at > last) last = a.at;
+      }
     }
+    const r = store.registry(),
+      planning = planningSettings(r, store.config.planning, store.now());
+    if (subscription)
+      return (
+        subscriptions < 60 &&
+        (!lastAny || now.getTime() - Date.parse(lastAny) >= 10000)
+      );
+    const reserve =
+      candidate?.target.kind !== "planning" &&
+      planning.enabled &&
+      DateTime.fromJSDate(now, { zone: store.config.timezone }).toFormat(
+        "HH:mm",
+      ) < planning.evening_time &&
+      r.tasks.some(
+        (t) =>
+          !!t.approval &&
+          ["ready", "in_progress", "blocked"].includes(t.status),
+      )
+        ? 1
+        : 0;
     return (
-      count < store.config.notifications.daily_proactive_message_cap &&
+      count <
+        ruleValue(
+          r,
+          "contact.suggestion_cap",
+          store.config.notifications.daily_proactive_message_cap,
+          store.now(),
+        ) -
+          reserve &&
       (!last ||
         now.getTime() - Date.parse(last) >=
-          store.config.notifications.minimum_gap_minutes * 60000)
+          ruleValue(
+            r,
+            "contact.minimum_gap_minutes",
+            store.config.notifications.minimum_gap_minutes,
+            store.now(),
+          ) *
+            60000)
     );
   }
   private body(candidate: Candidate) {
-    return candidate.target.kind === "habit"
-      ? "现在做这一小步就好：" + candidate.text + "。"
-      : candidate.text +
-          (candidate.due
-            ? "；截止 " +
-              DateTime.fromISO(candidate.due, {
-                zone: this.core.store.config.timezone,
-              }).toFormat("MM-dd HH:mm")
-            : "") +
-          "。";
+    if (candidate.noticeBody) return candidate.noticeBody;
+    const start = DateTime.fromISO(candidate.start)
+        .setZone(this.core.store.config.timezone)
+        .toFormat("HH:mm"),
+      end = DateTime.fromISO(candidate.end)
+        .setZone(this.core.store.config.timezone)
+        .toFormat("HH:mm");
+    if (candidate.target.kind === "habit")
+      return "现在方便的话，" + candidate.text + "。";
+    return (
+      candidate.text +
+      (candidate.due
+        ? "；截止 " +
+          DateTime.fromISO(candidate.due, {
+            zone: this.core.store.config.timezone,
+          }).toFormat("MM-dd HH:mm")
+        : "") +
+      "。这段到" +
+      end +
+      "。"
+    );
+  }
+  private languageKey(candidate: Candidate, followUp: boolean) {
+    const r = this.core.store.registry();
+    return hash(canonicalJson([candidate, followUp, r.rules_revision, r.planning_version]));
+  }
+  private literal(candidate: Candidate) {
+    if (candidate.target.kind !== "automation" || candidate.members) return null;
+    const a = this.core.store.registry().automations?.find(a => a.id === candidate.target.id);
+    return a?.kind === "one_shot" ? a.body : null;
+  }
+  private async prepareLanguage() {
+    if (this.core.agent?.executionMode !== "tools-v2" || !this.core.agent.compose) return;
+    if (!this.channel.health().connected) return;
+    // No write lock is held during model I/O. Revalidation below protects any
+    // completion, pause, rule change or reschedule that happens while it runs.
+    let generated = 0;
+    for (const candidate of this.candidates(this.core.store.registry())) {
+      if (!this.permitted(candidate.target.id, candidate) || this.literal(candidate) !== null) continue;
+      const sent = this.core.store.db.prepare("SELECT count(*) n FROM outbox o,json_each(o.source_versions_json) v WHERE v.key=? AND o.status IN ('sent','sending','unknown','abandoned')")
+        .get(candidate.id) as { n: number };
+      const cap = candidate.members || ["planning", "automation", "focus"].includes(candidate.target.kind) ? 1 : this.core.store.config.notifications.per_plan_reminder_cap;
+      if (sent.n >= cap) continue;
+      const followUp = sent.n > 0;
+      if (!this.budget(candidate, !followUp && candidate.contactClass === "subscription")) continue;
+      const key = this.languageKey(candidate, followUp);
+      if (this.language.has(key) || (this.languageRetryAfter.get(key) ?? 0) > Date.now()) continue;
+      if (generated++ >= 3) break;
+      try {
+        const { text } = await this.core.agent.compose({
+          purpose: followUp ? "follow_up" : "reminder",
+          now: this.core.store.now(), timezone: this.core.store.config.timezone,
+          candidate, // Machine facts, not a prewritten user-visible response.
+          preferences: this.core.assistant.preferences(candidate.text, [], "support").selected,
+          constraints: "用户行为未知；未反馈不等于没做；只推动当前一件事，不加承诺、打分或无必要问题。",
+        });
+        if (!text.trim() || text.length > 1800) throw new Error("INVALID_LANGUAGE");
+        this.language.set(key, text);
+        this.languageRetryAfter.delete(key);
+        while (this.language.size > 64) this.language.delete(this.language.keys().next().value!);
+      } catch {
+        this.lastError = "MESSAGE_GENERATION_FAILED";
+        this.languageRetryAfter.set(key, Date.now() + 30000);
+        while (this.languageRetryAfter.size > 64) this.languageRetryAfter.delete(this.languageRetryAfter.keys().next().value!);
+      }
+    }
   }
   async flushReceipts() {
     for (let i = 0; i < 8 && !this.stopped; i++) {
@@ -246,6 +551,11 @@ export class Scheduler {
     const { store } = this.core;
     this.lastTick = store.now();
     try {
+      if (!receiptsOnly && !this.languageTask) {
+        // Dispatch must never wait for a different candidate's model request.
+        this.languageTask=this.prepareLanguage().catch(()=>{this.lastError="MESSAGE_GENERATION_FAILED";})
+          .finally(()=>{this.languageTask=undefined;});
+      }
       const dispatch = await store.exclusive(() => {
         this.core.recoverPending();
         const claim = store.db.transaction(() => {
@@ -259,22 +569,60 @@ export class Scheduler {
             : this.candidates(store.registry());
           // Refresh unsent material from the approved current version; never reset attempt or per-plan counts.
           for (const candidate of available) {
-            if (!this.permitted(candidate.target.id)) continue;
+            const r = store.registry();
+            if (!this.permitted(candidate.target.id, candidate)) continue;
+            const cap =
+              candidate.members ||
+              ["planning", "automation", "focus"].includes(
+                candidate.target.kind,
+              )
+                ? 1
+                : Math.max(1, store.config.notifications.per_plan_reminder_cap);
+            const priorRows = store.db
+              .prepare(
+                "SELECT o.* FROM outbox o WHERE EXISTS (SELECT 1 FROM json_each(o.source_versions_json) v WHERE v.key=?) AND o.message_kind IN ('initial','follow_up')",
+              )
+              .all(candidate.id) as any[];
+            const occupied = priorRows.filter((row) =>
+              ["sent", "unknown", "sending"].includes(row.status),
+            );
+            if (
+              cap === 0 ||
+              occupied.length >= cap ||
+              occupied.some(
+                (row) => row.status === "unknown" || row.status === "sending",
+              )
+            )
+              continue;
             const initialKey = candidate.id + ":initial",
-              prior = store.db
-                .prepare("SELECT * FROM outbox WHERE dedupe_key=?")
-                .get(initialKey) as any;
+              prior =
+                (store.db
+                  .prepare("SELECT * FROM outbox WHERE dedupe_key=?")
+                  .get(initialKey) as any) ??
+                priorRows.find((row) =>
+                  ["sent", "sending", "unknown", "abandoned"].includes(
+                    row.status,
+                  ),
+                );
             let kind = "initial",
               key = initialKey;
             if (prior?.status === "sent") {
-              const sent = prior.sent_at ?? prior.attempt_started_at;
+              const last =
+                occupied.sort((a, b) =>
+                  (b.sent_at ?? "").localeCompare(a.sent_at ?? ""),
+                )[0] ?? prior;
+              const sent = last.sent_at ?? last.attempt_started_at;
               if (
                 !sent ||
                 Date.parse(store.now()) - Date.parse(sent) <
                   store.config.notifications.follow_up_after_minutes * 60000
               )
                 continue;
-              if (candidate.target.kind === "habit") {
+              if (
+                candidate.target.kind === "habit" &&
+                store.config.notifications
+                  .habit_follow_up_requires_recent_engagement
+              ) {
                 const engaged = store.db
                   .prepare(
                     "SELECT received_at FROM inbox ORDER BY received_at DESC LIMIT 1",
@@ -288,16 +636,47 @@ export class Scheduler {
                   continue;
               }
               kind = "follow_up";
-              key = candidate.id + ":follow_up";
+              key =
+                candidate.id +
+                ":follow_up" +
+                (occupied.length > 1 ? ":" + occupied.length : "");
             } else if (
               prior &&
               ["unknown", "abandoned", "sending"].includes(prior.status)
             )
               continue;
-            const body = this.body(candidate),
+            const nativeBody = this.core.agent?.executionMode === "tools-v2"
+              ? this.literal(candidate) ?? this.language.get(this.languageKey(candidate, kind === "follow_up"))
+              : null;
+            if (this.core.agent?.executionMode === "tools-v2" && !nativeBody) continue;
+            const body = nativeBody ?? (
+                kind === "follow_up"
+                  ? candidate.target.kind === "habit"
+                    ? "这次还有空的话，做这一小步就好：" +
+                      candidate.text +
+                      "；今天跳过也可以。"
+                    : "这项还没有完成确认。下一步：" +
+                      candidate.text +
+                      "；已经做完直接告诉我即可。"
+                  : this.body(candidate)),
               versions = JSON.stringify({
                 [candidate.id]: candidate.version,
                 [candidate.target.id]: candidate.targetVersion,
+                ...Object.fromEntries(
+                  (candidate.members ?? []).flatMap((c) => [
+                    [c.id, c.version],
+                    [c.target.id, c.targetVersion],
+                  ]),
+                ),
+                ["contact:" +
+                (kind === "follow_up"
+                  ? "suggestion"
+                  : (candidate.contactClass ?? "suggestion"))]: 1,
+                ...Object.fromEntries(
+                  (candidate.members ?? [candidate])
+                    .filter((c) => c.questionId)
+                    .map((c) => ["question:" + c.questionId, 1]),
+                ),
               });
             store.db
               .prepare(
@@ -308,7 +687,32 @@ export class Scheduler {
                 "qq",
                 this.recipient,
                 key,
-                JSON.stringify([candidate.target]),
+                JSON.stringify([
+                  ...(candidate.members ?? [candidate])
+                    .map((c) => c.target)
+                    .filter((c) => c.kind !== "planning"),
+                  ...r.proposals
+                    .filter(
+                      (p) =>
+                        p.status === "pending" &&
+                        p.expires_at > store.now() &&
+                        (candidate.members ?? [candidate]).some(
+                          (c) =>
+                            c.target.kind === "planning" &&
+                            (r.followups?.some(
+                              (f) =>
+                                c.questionId?.startsWith(f.id + "@") &&
+                                f.analysis?.proposal_id === p.id,
+                            ) ||
+                              (c.id.includes("planning:night:") &&
+                                p.source.channel === "coordinator" &&
+                                p.source.external_id.startsWith(
+                                  "planning:" + c.target.business_date + ":",
+                                ))),
+                        ),
+                    )
+                    .map((p) => ({ kind: "proposal", id: p.id })),
+                ]),
                 versions,
                 kind,
                 body,
@@ -336,6 +740,10 @@ export class Scheduler {
             ) as any[];
           for (const row of pending) {
             if (receiptsOnly && row.counts_as_proactive) continue;
+            if (this.core.agent?.executionMode === "tools-v2" && row.message_kind === "receipt" && JSON.parse(row.source_versions_json).language !== "llm") {
+              store.db.prepare("UPDATE outbox SET status='cancelled',finished_at=?,updated_at=? WHERE id=?").run(store.now(),store.now(),row.id);
+              continue;
+            }
             const part =
               row.message_kind === "receipt" &&
               row.dedupe_key.match(/^(.*:reply):(\d+)$/);
@@ -350,9 +758,12 @@ export class Scheduler {
               const candidate = available.find(
                 (c) =>
                   row.dedupe_key === c.id + ":initial" ||
-                  row.dedupe_key === c.id + ":follow_up",
+                  row.dedupe_key.startsWith(c.id + ":follow_up"),
               );
-              if (!candidate || !this.permitted(candidate.target.id)) {
+              if (
+                !candidate ||
+                !this.permitted(candidate.target.id, candidate)
+              ) {
                 store.db
                   .prepare(
                     "UPDATE outbox SET status='cancelled',finished_at=?,updated_at=? WHERE id=?",
@@ -360,15 +771,51 @@ export class Scheduler {
                   .run(store.now(), store.now(), row.id);
                 continue;
               }
-              if (!this.budget()) continue;
+              if (this.core.agent?.executionMode === "tools-v2") {
+                const currentText = this.literal(candidate) ?? this.language.get(this.languageKey(candidate, row.message_kind === "follow_up"));
+                if (!currentText || row.body !== currentText) continue;
+              }
+              const cap =
+                candidate.members ||
+                ["planning", "automation", "focus"].includes(
+                  candidate.target.kind,
+                )
+                  ? 1
+                  : Math.max(
+                      1,
+                      store.config.notifications.per_plan_reminder_cap,
+                    );
+              const already = store.db
+                .prepare(
+                  "SELECT count(*) n FROM outbox o WHERE status IN ('sent','sending','unknown') AND EXISTS(SELECT 1 FROM json_each(o.source_versions_json) v WHERE v.key=?)",
+                )
+                .get(candidate.id) as { n: number };
+              if (already.n >= cap) {
+                store.db
+                  .prepare(
+                    "UPDATE outbox SET status='cancelled',finished_at=?,updated_at=? WHERE id=?",
+                  )
+                  .run(store.now(), store.now(), row.id);
+                continue;
+              }
+              if (
+                !this.budget(
+                  candidate,
+                  row.message_kind !== "follow_up" &&
+                    candidate.contactClass === "subscription",
+                )
+              )
+                continue;
               // Hard deadlines win even when an earlier disconnected tick enqueued a habit first.
               const first = available.find(
                 (c) =>
-                  this.permitted(c.target.id) &&
+                  this.permitted(c.target.id, c) &&
+                  (this.core.agent?.executionMode!=="tools-v2" || this.literal(c)!==null ||
+                    this.language.has(this.languageKey(c,false)) || this.language.has(this.languageKey(c,true))) &&
                   pending.some(
                     (p) =>
                       p.dedupe_key === c.id + ":initial" ||
-                      p.dedupe_key === c.id + ":follow_up",
+                      p.dedupe_key.startsWith(c.id + ":follow_up"),
                   ),
               );
               if (first && first.id !== candidate.id) continue;
@@ -401,6 +848,12 @@ export class Scheduler {
           return null;
         })();
         if (!claim) return null;
+        this.core.coordinator.contactState(
+          claim.row.id,
+          claim.row.source_versions_json,
+          "sending",
+          claim.row.attempts,
+        );
         // Commit the durable claim before starting I/O, without yielding the writer turn.
         let delivery: ReturnType<Channel["send"]>;
         try {
@@ -458,6 +911,12 @@ export class Scheduler {
             store.now(),
             row.id,
           );
+        this.core.coordinator.contactState(
+          row.id,
+          row.source_versions_json,
+          result.status,
+          row.attempts,
+        );
       });
       this.lastError = null;
       return result.status === "sent";
@@ -468,7 +927,8 @@ export class Scheduler {
       this.releaseIdle?.();
     }
   }
-  async drain() {
+  async drain(language = false) {
     await this.idle;
+    if(language) await this.languageTask;
   }
 }

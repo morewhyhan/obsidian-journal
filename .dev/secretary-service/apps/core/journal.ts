@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { DateTime } from "luxon";
 import {
   AppError,
   type DiaryLink,
@@ -57,6 +58,39 @@ export const templateNames: Record<Period, string> = {
   quarterly: "季度计划模版",
   yearly: "年度反思模版",
 };
+export const focusHeadings: Record<Period, string> = {
+  yearly: "今年重点",
+  quarterly: "本季重点",
+  monthly: "本月重点",
+  weekly: "本周重点",
+  daily: "任务",
+};
+export function patchFocus(
+  content: string,
+  heading: string,
+  text: string,
+  replace = false,
+) {
+  const rows = visibleLines(content),
+    matches = rows
+      .map((x, i) => ({ x, i }))
+      .filter(({ x }) => x.visible && x.text.trim() === "# " + heading);
+  if (matches.length !== 1)
+    throw new AppError("PROJECTION_CONFLICT", "重点标题无法唯一定位", 409);
+  const start = matches[0].i + 1;
+  let end = start;
+  while (
+    end < rows.length &&
+    !(rows[end].visible && /^# /.test(rows[end].text))
+  )
+    end++;
+  const from = rows[start]?.offset ?? content.length,
+    to = rows[end]?.offset ?? content.length,
+    newline = content.includes("\r\n") ? "\r\n" : "\n";
+  const current = content.slice(from, to).trim(),
+    value = (replace ? text : current ? current + newline + text : text).trim();
+  return content.slice(0, from) + value + newline + newline + content.slice(to);
+}
 export function renderTemplate(template: string, kind: Period, date: string) {
   const c = context(kind, date);
   let output = template.replace(
@@ -252,6 +286,42 @@ export function project(store: Store, targetIds: string[]) {
     const p = store.files.resolve(link.path);
     if (!fs.existsSync(p)) continue;
     let content = fs.readFileSync(p, "utf8");
+    const target =
+      link.target_ref.kind === "habit"
+        ? registry.habits.find((x) => x.id === link.target_ref.id)
+        : registry.tasks.find((x) => x.id === link.target_ref.id);
+    const plan = registry.plans
+      .filter(
+        (x) =>
+          x.target_ref.id === link.target_ref.id &&
+          ["planned", "active"].includes(x.status) &&
+          localDate(new Date(x.window_start), store.config.timezone) ===
+            link.business_date,
+      )
+      .sort((a, b) => a.window_start.localeCompare(b.window_start))[0];
+    const display =
+      plan && target
+        ? DateTime.fromISO(plan.window_start)
+            .setZone(store.config.timezone)
+            .toFormat("HH:mm") +
+          "—" +
+          DateTime.fromISO(plan.window_end)
+            .setZone(store.config.timezone)
+            .toFormat("HH:mm") +
+          " " +
+          (plan.next_action.includes(target.title)
+            ? plan.next_action
+            : target.title + " · " + plan.next_action) +
+          ("due_at" in target && target.due_at
+            ? "（截止：" +
+              DateTime.fromISO(target.due_at)
+                .setZone(store.config.timezone)
+                .toFormat("MM-dd HH:mm") +
+              "）"
+            : "")
+        : (target?.title ?? "");
+    let managed = link.managed_label,
+      fingerprint = link.line_fingerprint;
     let boxes = checkboxes(content).filter(
       (x) => x.fingerprint === link.line_fingerprint,
     );
@@ -275,17 +345,31 @@ export function project(store: Store, targetIds: string[]) {
         prefix +
         (prefix.endsWith("\n") ? "" : newline) +
         "- [ ] " +
-        target.title +
+        display +
         newline +
         content.slice(offset);
       atomicWrite(p, content);
       store.index(link.path);
       changed.push(link.path);
-      boxes = checkboxes(content).filter(
-        (x) => x.fingerprint === link.line_fingerprint,
-      );
+      managed = display;
+      fingerprint = hash(link.heading + "\n" + display);
+      boxes = checkboxes(content).filter((x) => x.fingerprint === fingerprint);
     }
     if (boxes.length !== 1) continue;
+    if (managed && plan && managed !== display) {
+      const box = boxes[0],
+        start = box.start + 3;
+      content =
+        content.slice(0, start) +
+        display +
+        content.slice(start + box.label.length);
+      atomicWrite(p, content);
+      store.index(link.path);
+      changed.push(link.path);
+      managed = display;
+      fingerprint = hash(link.heading + "\n" + display);
+      boxes = checkboxes(content).filter((x) => x.fingerprint === fingerprint);
+    }
     let checked = false;
     if (link.target_ref.kind === "habit") {
       const date =
@@ -311,7 +395,7 @@ export function project(store: Store, targetIds: string[]) {
       store.index(link.path);
       changed.push(link.path);
     }
-    const target =
+    const finalTarget =
         link.target_ref.kind === "habit"
           ? registry.habits.find((x) => x.id === link.target_ref.id)
           : registry.tasks.find((x) => x.id === link.target_ref.id),
@@ -320,10 +404,15 @@ export function project(store: Store, targetIds: string[]) {
       link.allow_append ||
       link.last_hash !== finalHash ||
       link.position_hint !== box.line ||
-      link.last_item_version !== target?.version
+      link.last_item_version !== finalTarget?.version
     ) {
       store.commit(
-        "binding-meta:" + link.id + ":" + finalHash + ":" + target?.version,
+        "binding-meta:" +
+          link.id +
+          ":" +
+          finalHash +
+          ":" +
+          finalTarget?.version,
         "core",
         link.id,
         (r, _, operation) => {
@@ -333,7 +422,11 @@ export function project(store: Store, targetIds: string[]) {
             current.last_hash = finalHash;
             current.position_hint = box.line;
             current.last_item_version =
-              target?.version ?? current.last_item_version;
+              finalTarget?.version ?? current.last_item_version;
+            if (managed) {
+              current.managed_label = managed;
+              current.line_fingerprint = fingerprint;
+            }
             current.version++;
             current.updated_at = store.now();
             current.last_operation_id = operation;

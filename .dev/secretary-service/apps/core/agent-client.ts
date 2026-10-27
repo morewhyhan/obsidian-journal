@@ -1,6 +1,8 @@
 import type { AgentAdapter, AgentResult } from "./core.js";
 import type { Input } from "../../packages/contracts/types.js";
 import { AppError } from "../../packages/contracts/types.js";
+import {AGENT_TOOLS} from "../../packages/contracts/agent-tools.js";
+import {hash} from "./files.js";
 function valid(result: any): result is AgentResult {
   return (
     result &&
@@ -34,6 +36,7 @@ function valid(result: any): result is AgentResult {
   );
 }
 export class AstrBotClient implements AgentAdapter {
+  readonly executionMode = "tools-v2" as const;
   private shutdown = new AbortController();
   constructor(
     private url: string,
@@ -46,7 +49,7 @@ export class AstrBotClient implements AgentAdapter {
     this.shutdown.abort();
   }
   async interpret(input: Input, context: unknown): Promise<AgentResult> {
-    const timeout = input.id === "model-self-test" ? 30000 : this.timeoutMs;
+    const timeout = input.id === "model-self-test" ? 30000 : input.channel==="coordinator"?Math.min(60000,this.timeoutMs):this.timeoutMs;
     const signal = AbortSignal.any([
       this.shutdown.signal,
       AbortSignal.timeout(timeout),
@@ -63,11 +66,17 @@ export class AstrBotClient implements AgentAdapter {
           context,
           instructions: this.instructions,
           limits: { max_tools: this.limits.maxTools, timeout_ms: timeout },
+          execution_mode: input.id === "model-self-test" || input.channel === "coordinator" && !(context as any)?.background_grant ? "legacy" : this.executionMode,
         }),
         signal,
       });
-      if (!response.ok)
-        throw new AppError("AGENT_UNAVAILABLE", "理解服务暂时不可用", 503);
+      if (!response.ok) {
+        const failure = await response.json().catch(() => null) as any;
+        const code = ["AGENT_BUSY", "BRIDGE_TIMEOUT", "AGENT_INVALID", "TOOL_LIMIT"].includes(failure?.error?.code)
+          ? failure.error.code : "AGENT_UNAVAILABLE";
+        const reason = /^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(failure?.error?.reason ?? "") ? failure.error.reason : null;
+        throw new AppError(code, "理解服务暂时不可用，已执行操作以回执为准", 503, { reason });
+      }
       let result: unknown;
       try {
         result = await response.json();
@@ -89,6 +98,9 @@ export class AstrBotClient implements AgentAdapter {
     });
     if (!health.ok)
       throw new AppError("AGENT_STARTING", "Agent服务仍在启动", 503);
+    const contract=await health.json() as any;
+    if(contract.protocol!=="tools-v2" || contract.tools_hash!==hash(JSON.stringify(AGENT_TOOLS)))
+      throw new AppError("AGENT_CONTRACT_MISMATCH","Core与插件工具合同不兼容，未调用模型",503);
     const result = await this.interpret(
       {
         id: "model-self-test",
@@ -139,7 +151,7 @@ export class AstrBotClient implements AgentAdapter {
     if (
       typeof result.text !== "string" ||
       !result.text.trim() ||
-      result.text.length > 250
+      result.text.length > 1800
     )
       throw new AppError("AGENT_INVALID", "文案不符合短回复要求", 503);
     return result;

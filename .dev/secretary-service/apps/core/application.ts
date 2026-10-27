@@ -8,6 +8,13 @@ import {
   day,
 } from "../../packages/calendar/index.js";
 import { AppError } from "../../packages/contracts/types.js";
+import { toolMutation,assertToolSession } from "./tool-effects.js";
+import { requireCapability } from "./policy.js";
+import { businessCall, type BusinessCall } from "./agent-runtime.js";
+import { checkGrant } from "./background-grant.js";
+import { recordQuery,queryStamp,advanceOwnReads } from "./read-stamps.js";
+import { actionSchema } from "../../packages/contracts/api.js";
+import { actionFields } from "../../packages/contracts/action-fields.js";
 
 export const applicationCapabilities = {
   period_creation: {
@@ -21,8 +28,12 @@ export const applicationCapabilities = {
       "使用Template现有模板和统一日历引擎渲染，自动补齐缺失父计划；不覆盖现有笔记，不执行任意Templater脚本。不要手写日期元数据/父链接，不需要用户解释规则或打开Obsidian。",
   },
   business: {
+    personal:
+      "rules/automations/focus/board/planning_context按需读取；自主工具模式用apply_changes执行规则、自动化和计时动作，纯消息提醒用create_automation。",
+    planning:
+      "secretary.planning按日期读取真实安排、待决冲突、准备资料入口和已确认可用时间；自主工具模式用apply_changes办理plan_day/set_planning/configure_task/report_execution。",
     read: "secretary.state/day 按需查询所有习惯、任务、安排和历史事实；空的预载上下文不等于没有记录",
-    write: "submit_proposal 业务动作，带读取到的id/version",
+    write: "secretary.apply_changes直接执行，带读取到的id/version；save_proposals保留未定建议；resolve_proposals决定原建议，不重复新建",
   },
   files: {
     tool: "workspace",
@@ -55,7 +66,15 @@ export type ApplicationCall = {
   input_id: string;
   call_id: string;
   operation:
+    | "apply_changes" | "save_proposals" | "resolve_proposals" | "conversation"
+    | "rules"
+    | "automations"
+    | "focus"
+    | "board"
+    | "planning_context"
     | "preferences"
+    | "followups"
+    | "planning"
     | "capabilities"
     | "periods"
     | "create_period"
@@ -77,15 +96,33 @@ export type ApplicationCall = {
   recovery_id?: string;
   commit?: string;
   base_hash?: string;
+  summary?: string;
+  commit_mode?: BusinessCall["commit_mode"];
+  action_groups?: BusinessCall["action_groups"];
+  decisions?: BusinessCall["decisions"];
 };
 export async function applicationCall(
   core: Core,
   args: ApplicationCall,
   extra: { status: () => unknown; backup: GitWorker },
 ) {
+  if (["apply_changes", "save_proposals", "resolve_proposals"].includes(args.operation))
+    return businessCall(core, args as BusinessCall);
+  if (["create_period", "restore_note", "restore_version"].includes(args.operation))
+    return toolMutation(core, args, () => applicationOperation(core, args, extra));
+  const snapshot=core.store.registry(),stamp=queryStamp(core.store,args,snapshot);
+  const result=await applicationOperation(core,args,extra);
+  recordQuery(core.store,args.input_id,args,snapshot,stamp);
+  return result;
+}
+async function applicationOperation(
+  core: Core,
+  args: ApplicationCall,
+  extra: { status: () => unknown; backup: GitWorker },
+) {
   const s = core.store;
   const session = s.db
-    .prepare("SELECT status FROM inbox WHERE id=?")
+    .prepare("SELECT status,channel,metadata_json FROM inbox WHERE id=?")
     .get(args.input_id) as any;
   if (session?.status !== "processing")
     throw new AppError(
@@ -93,18 +130,184 @@ export async function applicationCall(
       "不属于正在处理的用户请求",
       403,
     );
+  if (
+    JSON.parse(session.metadata_json ?? "{}").read_only &&
+    ["create_period", "restore_note", "restore_version"].includes(
+      args.operation,
+    )
+  )
+    throw new AppError("DISCUSSION_ONLY", "本轮只讨论或查询，不执行变更", 403);
+  if (
+    session.channel === "coordinator" &&
+    ![
+      "capabilities",
+      "rules",
+      "preferences",
+      "followups",
+      "automations",
+      "focus",
+      "board",
+      "planning_context",
+      "planning",
+      "state",
+      "day",
+      "periods",
+    ].includes(args.operation)
+  )
+    throw new AppError(
+      "PLANNING_SCOPE",
+      "周期作业不能修改文件或读取私人叙述",
+      403,
+    );
   const offset = args.offset ?? 0;
+  if(session.channel==="coordinator" && JSON.parse(session.metadata_json).background_grant) {
+    const g=checkGrant(s,args.input_id);
+    if(args.operation==="state") {
+      const r=s.registry(),wanted=args.ids??g.object_ids;
+      if(wanted.some(id=>!g.object_ids.includes(id)))throw new AppError("BACKGROUND_SCOPE","查询对象超出委托范围",403);
+      const all=[...r.tasks,...r.habits,...r.plans,...r.proposals,...r.user_rules??[]].filter(x=>wanted.includes(x.id));
+      return {items:all.slice(offset,offset+20),total:all.length,next_offset:offset+20<all.length?offset+20:null};
+    }
+    if(args.operation==="followups")return {items:[s.registry().followups!.find(f=>f.id===g.work_id)],next_offset:null};
+    if(args.operation!=="capabilities")throw new AppError("BACKGROUND_SCOPE","当前委托仅允许相关事项和固定路径查询",403);
+  }
   if (!Number.isInteger(offset) || offset < 0)
     throw new AppError("INVALID_OFFSET", "无效分页位置");
   const date = args.date ?? localDate(s.clock(), s.config.timezone);
+  day(date);
   const key = args.input_id + ":application:" + args.call_id;
-  if (args.operation === "capabilities") return applicationCapabilities;
+  if (args.operation === "capabilities") {
+    if(args.query && actionFields[args.query]) {
+      const type=args.query,source:any=actionSchema;
+      const restrictions=source.allOf.filter((rule:any)=>rule.if?.properties?.type?.const===type || rule.if?.properties?.type?.enum?.includes(type)).map((rule:any)=>rule.then);
+      return {action:type,schema:{type:"object",additionalProperties:false,required:["type"],
+        properties:Object.fromEntries(actionFields[type].filter(k=>k in source.properties).map(k=>[k,k==="type"?{const:type}:source.properties[k]])),
+        allOf:restrictions},authority:"生成源契约的动作投影，实际提交仍经过完整双端校验"};
+    }
+    return applicationCapabilities;
+  }
+  if (args.operation === "conversation") {
+    const caller = s.db.prepare("SELECT channel,actor_ref FROM inbox WHERE id=?").get(args.input_id) as any;
+    const rows = s.db.prepare("SELECT id,body,metadata_json,status,received_at FROM inbox WHERE channel=? AND actor_ref=? AND id<>? ORDER BY rowid DESC LIMIT 8 OFFSET ?")
+      .all(caller.channel, caller.actor_ref, args.input_id, offset) as any[];
+    return { items: rows.reverse().map(row => ({
+      id: row.id, text: String(row.body ?? "").slice(0, 6000),
+      reply: String(JSON.parse(row.metadata_json).reply ?? "").slice(0, 6000),
+      status: row.status, at: row.received_at,
+      proposals: JSON.parse(row.metadata_json).offered_proposal_ids ?? [],
+    })), next_offset: rows.length === 8 ? offset + 8 : null };
+  }
+  if (args.operation === "followups") {
+    const found = (s.registry().followups ?? []).filter(
+      (f) =>
+        (!args.ids?.length ||
+          args.ids.includes(f.id) ||
+          args.ids.includes(f.issue.task_id ?? f.issue.habit_id ?? "")) &&
+        (!args.query ||
+          JSON.stringify(f).toLowerCase().includes(args.query.toLowerCase())),
+    );
+    const selected=found.slice(offset,offset+10);
+    const row=s.db.prepare("SELECT metadata_json FROM inbox WHERE id=?").get(args.input_id) as any;
+    const access=JSON.parse(row.metadata_json).observed_refs??[];
+    s.db.prepare("UPDATE inbox SET metadata_json=json_set(metadata_json,'$.observed_refs',json(?)) WHERE id=?")
+      .run(JSON.stringify([...new Map([...access,...selected.map(f=>({id:f.id,version:f.version}))].map(x=>[x.id,x])).values()]),args.input_id);
+    return {
+      items: selected,
+      next_offset: offset + 10 < found.length ? offset + 10 : null,
+    };
+  }
+  if (
+    ["rules", "automations", "focus", "board", "planning_context"].includes(
+      args.operation,
+    )
+  ) {
+    const view = core.assistant.view();
+    const meta = s.db
+      .prepare("SELECT metadata_json FROM inbox WHERE id=?")
+      .get(args.input_id) as any;
+    const previous = JSON.parse(meta.metadata_json).observed_refs ?? [];
+    s.db
+      .prepare(
+        "UPDATE inbox SET metadata_json=json_set(metadata_json,'$.observed_refs',json(?)) WHERE id=?",
+      )
+      .run(
+        JSON.stringify([
+          ...new Map(
+            [...previous, ...view.objects].map((x) => [x.id, x]),
+          ).values(),
+        ]),
+        args.input_id,
+      );
+    if (args.operation === "rules") {
+      const matching = view.rules.filter((x) => !args.query || x.key.includes(args.query));
+      return {
+        revision: view.rules_revision,
+        items: matching.slice(offset, offset + 20),
+        next_offset: offset + 20 < matching.length ? offset + 20 : null,
+        values: view.values,
+        planning: view.planning,
+      };
+    }
+    if (args.operation === "automations")
+      return {
+        items: view.automations.slice(offset, offset + 20),
+        next_offset: offset + 20 < view.automations.length ? offset + 20 : null,
+        occurrences: (s.day(date).automation_occurrences ?? [])
+          .slice(offset, offset + 20)
+          .map((x) => ({ ...x, business_date: date })),
+      };
+    if (args.operation === "planning_context")
+      return core.assistant.context(date);
+    return args.operation === "focus" ? { focus: view.focus } : view.board;
+  }
+  if (args.operation === "planning") {
+    const view = core.coordinator.view(date);
+    const r = s.registry();
+    const grants = [...r.tasks, ...r.habits, ...view.plans].map((e) => ({
+      id: e.id,
+      version: e.version,
+    }));
+    const meta = s.db
+      .prepare("SELECT metadata_json FROM inbox WHERE id=?")
+      .get(args.input_id) as any;
+    const previous = JSON.parse(meta.metadata_json).observed_refs ?? [];
+    s.db
+      .prepare(
+        "UPDATE inbox SET metadata_json=json_set(metadata_json,'$.observed_refs',json(?)) WHERE id=?",
+      )
+      .run(
+        JSON.stringify([
+          ...new Map([...previous, ...grants].map((x) => [x.id, x])).values(),
+        ]),
+        args.input_id,
+      );
+    return view;
+  }
   if (args.operation === "preferences") {
-    const p = s.files.resolve(".agent/context/user.md", "internal"),
-      content = fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
+    const purpose =
+      session.channel === "coordinator"
+        ? JSON.parse(session.metadata_json ?? "{}").planning_job
+          ? "planning"
+          : "support"
+        : "all";
+    const memory = core.assistant.preferences(
+      args.query,
+      args.ids ?? [],
+      purpose,
+    );
+    const content = args.query
+      ? memory.content
+          .split(/\r?\n/)
+          .filter((x) => x.toLowerCase().includes(args.query!.toLowerCase()))
+          .join("\n")
+      : memory.content;
     return {
       content: content.slice(offset, offset + 4000),
       next_offset: offset + 4000 < content.length ? offset + 4000 : null,
+      principles: memory.principles.slice(offset, offset + 10),
+      principles_next_offset:
+        offset + 10 < memory.principles.length ? offset + 10 : null,
+      authority: "仅用户明确确认的事实与工作原则；不授予文件、权限或外部承诺。",
     };
   }
   if (args.operation === "status") return extra.status();
@@ -126,7 +329,7 @@ export async function applicationCall(
     };
   }
   if (args.operation === "create_period") {
-    const result = await core.newPeriod(args.kind ?? "daily", date);
+    const result = await core.newPeriod(args.kind ?? "daily", date,()=>{assertToolSession(s,args);requireCapability(s,"business_write");},()=>advanceOwnReads(s,args.input_id));
     return {
       ...result,
       template_applied: result.created.includes(result.path),
@@ -162,7 +365,7 @@ export async function applicationCall(
     const meta = s.db
       .prepare("SELECT metadata_json FROM inbox WHERE id=?")
       .get(args.input_id) as any;
-    const prior = JSON.parse(meta.metadata_json).authorized_objects ?? [];
+    const prior = JSON.parse(meta.metadata_json).observed_refs ?? [];
     const grants = [
       ...new Map(
         [
@@ -173,7 +376,7 @@ export async function applicationCall(
     ];
     s.db
       .prepare(
-        "UPDATE inbox SET metadata_json=json_set(metadata_json,'$.authorized_objects',json(?)) WHERE id=?",
+        "UPDATE inbox SET metadata_json=json_set(metadata_json,'$.observed_refs',json(?)) WHERE id=?",
       )
       .run(JSON.stringify(grants), args.input_id);
     return {
@@ -212,6 +415,7 @@ export async function applicationCall(
     if (!args.recovery_id)
       throw new AppError("INVALID_RECOVERY", "需要恢复标识");
     return s.exclusive(() => {
+      assertToolSession(s,args);requireCapability(s,"business_write");
       const result = core.documents.restoreTrash(args.recovery_id!, key);
       core.emit("document_changed", { path: result.path });
       return result;
@@ -237,6 +441,6 @@ export async function applicationCall(
       next_offset: offset + 10000 < content.length ? offset + 10000 : null,
     };
   if (args.operation === "restore_version")
-    return core.saveDocument(args.path, args.base_hash ?? "", content, key);
+    return core.saveDocument(args.path, args.base_hash ?? "", content, key,()=>assertToolSession(s,args));
   throw new AppError("INVALID_OPERATION", "不支持此应用操作");
 }

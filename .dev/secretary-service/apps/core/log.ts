@@ -5,6 +5,13 @@ import type { Store } from "./store.js";
 /** Operational metadata only. Never accept arbitrary request/error objects. */
 export class RuntimeLog {
   error: string | null = null;
+  private errors=new Map<string,{module:string;code:string;first_seen:string;last_seen:string;count:number}>();
+  private durations=[0,0,0,0,0,0];
+  private readonly bounds=[10,50,250,1000,10000];
+  private overflow=0;
+  summary() {return {state:this.error?"diagnostic_degraded":"ready",error:this.error,
+    errors:[...this.errors.values()],error_groups_dropped:this.overflow,
+    latency:{bounds_ms:this.bounds,counts:[...this.durations],last_bucket:"above_10000_ms"}};}
   constructor(private store: Store) {}
   write(
     event: string,
@@ -17,6 +24,16 @@ export class RuntimeLog {
       route?: string;
     } = {},
   ) {
+    const safe=(value:string)=>value.replace(/[^A-Za-z0-9_:\-./]/g,"").slice(0,120);
+    if(fields.code) {
+      const module=safe(event),code=safe(fields.code),key=module+":"+code,now=this.store.now(),prior=this.errors.get(key);
+      if(prior){prior.last_seen=now;prior.count++;}
+      else if(this.errors.size<128)this.errors.set(key,{module,code,first_seen:now,last_seen:now,count:1});
+      else this.overflow++;
+    }
+    if(Number.isFinite(fields.duration_ms) && fields.duration_ms!>=0) {
+      const bucket=this.bounds.findIndex(x=>fields.duration_ms!<=x);this.durations[bucket<0?5:bucket]++;
+    }
     try {
       const date = DateTime.fromJSDate(this.store.clock(), {
           zone: this.store.config.timezone,
@@ -68,7 +85,7 @@ export class RuntimeLog {
           );
       let bytes = entries.reduce((sum, entry) => sum + entry.size, 0);
       for (const entry of entries)
-        if (entry.name.slice(0, 10) < cutoff || bytes > 24 * 1024 * 1024) {
+        if (entry.name.slice(0, 10) < cutoff || bytes > 50 * 1024 * 1024) {
           fs.unlinkSync(entry.file);
           bytes -= entry.size;
         }
