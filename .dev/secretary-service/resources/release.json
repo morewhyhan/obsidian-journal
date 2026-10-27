@@ -1,9 +1,9 @@
 {
   "format": 1,
   "service_version": "0.1.0",
-  "source_commit": "25aa992500d379bd2e2eef4c8f7e8ab76509c5b5",
+  "source_commit": "2d28353102cdd119bbef079a77ad76d9315adbb9",
   "source_commit_is_base_only": true,
-  "source_hash": "sha256:434e44d41f713a304be3de8b247567fcf81fd187037c31ce163ca415e8e45189",
+  "source_hash": "sha256:cba3423e06af8f262412a9c3bbcecc78d336a500219ccdad9dbe8585a9992e02",
   "lock_hash": "sha256:a1340b831039fad6ccb59eea32648172911a3773627c3f9113f507112401a651",
   "tools_hash": "sha256:25f0f499a36e456a3129cbfe5fc70ae7d748570350f69bb4a0f36b2408d5eec5",
   "plugin_version": "1.0.0",
@@ -55,7 +55,7 @@
     },
     {
       "path": "apps/core/compatibility-runtime.ts",
-      "hash": "sha256:c50c61797ecc5c9b1f96f53d307d7326ea7784d78aa2447b890f5b13f04dd6e8"
+      "hash": "sha256:c21468734475084248658e01d2cf689339ecafaaa46e3a6562138ef7edf3aaed"
     },
     {
       "path": "apps/core/compatibility.ts",
