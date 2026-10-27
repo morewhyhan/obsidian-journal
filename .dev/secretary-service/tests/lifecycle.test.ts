@@ -129,6 +129,42 @@ it("a processing guard stuck past its bound is recovered instead of starving eve
   ).toMatchObject({ status: "failed", error_code: "TURN_TIMEOUT" });
 });
 
+it("a hanging turn is abandoned at its deadline and the next message is still processed", async () => {
+  const h = harness("2026-10-27T05:40:00Z");
+  cleanups.push(() => h.close());
+  let calls = 0;
+  h.core.agent = {
+    executionMode: "tools-v2",
+    interpret: async () => {
+      calls += 1;
+      if (calls === 1) return new Promise(() => {});
+      return {
+        action_groups: [],
+        clarification: null,
+        reply_intent: "discussion",
+        discussion: "到了",
+      };
+    },
+    close() {},
+  } as any;
+  h.core.turnDeadlineMs = 20;
+  const insert = (id: string, text: string) =>
+    h.store.db
+      .prepare(
+        "INSERT INTO inbox(id,channel,actor_ref,external_id,body,metadata_json,status,attempts,received_at,occurred_at) VALUES(?,?,?,?,?,?,'pending',0,?,?)",
+      )
+      .run(id, "qq", "user", id, text, "{}", h.store.now(), h.store.now());
+  insert("input_hang", "第一条");
+  insert("input_next", "第二条");
+  await h.core.processPending();
+  expect(
+    h.store.db.prepare("SELECT status,error_code FROM inbox WHERE id='input_hang'").get(),
+  ).toMatchObject({ status: "failed", error_code: "DEADLINE_EXCEEDED" });
+  expect(
+    h.store.db.prepare("SELECT status FROM inbox WHERE id='input_next'").get(),
+  ).toMatchObject({ status: "processed" });
+});
+
 it("maintenance round trips keep the degraded reasons that caused them", async () => {
   const h = harness("2026-10-27T04:00:00Z");
   cleanups.push(() => h.close());

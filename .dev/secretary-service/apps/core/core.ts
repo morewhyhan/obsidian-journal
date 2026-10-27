@@ -117,6 +117,8 @@ export class Core {
   summaryError: string | null = null;
   /** A turn lease, not a boolean: a hung turn expires instead of starving the queue. */
   readonly turnLease = new Lease("turn", 150_000);
+  /** A single turn may not hold the queue longer than this. */
+  turnDeadlineMs = 45_000;
   private foregroundStreak=0;
   operationKey(input:Input,actions:Action[],identity:string) {
     const literal=literalReportText(input.text);
@@ -1900,7 +1902,12 @@ export class Core {
           .run(input.id);
         try {
           if (this.agent.executionMode === "tools-v2") {
-            await processNativeInput(this, input);
+            // One turn may not hold the queue longer than a model budget. On
+            // timeout the row is closed and the loop moves to the next message
+            // immediately; the abandoned work cannot hold anyone else.
+            await withDeadline("turn:" + input.id, this.turnDeadlineMs, () =>
+              processNativeInput(this, input),
+            );
             continue;
           }
           const r = this.store.registry(),
