@@ -49,6 +49,7 @@ export class Scheduler {
   private language = new Map<string, string>();
   private languageRetryAfter = new Map<string, number>();
   busy = false;
+  private busySince = 0;
   lastTick: string | null = null;
   lastError: string | null = null;
   private idle: Promise<void> = Promise.resolve();
@@ -543,8 +544,15 @@ export class Scheduler {
     this.stopped = true;
   }
   async tick(receiptsOnly = false) {
-    if (this.busy || this.stopped) return;
+    if (this.busy) {
+      // A tick that never returned would silently stop all dispatch.
+      if (Date.now() - this.busySince < 120_000) return;
+      this.busy = false;
+      this.lastError = "TICK_GUARD_RECOVERED";
+    }
+    if (this.stopped) return;
     this.busy = true;
+    this.busySince = Date.now();
     this.idle = new Promise((resolve) => {
       this.releaseIdle = resolve;
     });
@@ -918,6 +926,7 @@ export class Scheduler {
       this.lastError = error instanceof Error ? error.name : "SCHEDULER_ERROR";
     } finally {
       this.busy = false;
+      this.busySince = 0;
       this.releaseIdle?.();
     }
   }

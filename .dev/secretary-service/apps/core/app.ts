@@ -1214,11 +1214,35 @@ export async function createApp(options: AppOptions) {
     closing = false;
   if (options.timers !== false) {
     if (channel instanceof AstrBotChannel) channel.connect();
+    // Every step of the loop is bounded: one await that never settles would
+    // otherwise freeze planning, dispatch, recovery and cleanup together, and
+    // the only visible symptom would be "the assistant stopped answering".
+    const bounded = async (step: string, task: Promise<unknown>, ms: number) => {
+      let guard: NodeJS.Timeout | undefined;
+      try {
+        await Promise.race([
+          task,
+          new Promise((_, reject) => {
+            guard = setTimeout(
+              () => reject(Object.assign(new Error(step + "_TIMEOUT"), { code: step + "_TIMEOUT" })),
+              ms,
+            );
+          }),
+        ]);
+      } catch (error) {
+        log.write("cycle_step_failed", {
+          route: step,
+          code: (error as { code?: string })?.code ?? "CYCLE_STEP_FAILED",
+        });
+      } finally {
+        if (guard) clearTimeout(guard);
+      }
+    };
     const cycle = () => {
       if (closing || cycleTask) return;
       cycleTask = (async () => {
-        await core.coordinator.tick();
-        await core.assistant.tick();
+        await bounded("coordinator", core.coordinator.tick(), 60000);
+        await bounded("assistant", core.assistant.tick(), 60000);
         void scheduler.tick();
         if (closing) return;
         checkAgent();
@@ -1226,8 +1250,8 @@ export async function createApp(options: AppOptions) {
         core.assistant.startPlanning();
         void backup.tick();
         const previousCleanup = maintenance.last?.at;
-        await snapshotBackup.tick();
-        await maintenance.tick();
+        await bounded("snapshot", snapshotBackup.tick(), 120000);
+        await bounded("maintenance", maintenance.tick(), 120000);
         if (previousCleanup !== maintenance.last?.at) backup.changed();
       })()
         .catch(() => {

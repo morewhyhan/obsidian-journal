@@ -98,6 +98,31 @@ it("a model job left by a dead process is dropped on restart instead of blocking
   expect(h.store.lifecycle).toBe("ready");
 });
 
+it("a processing guard stuck past its bound is recovered instead of starving every later message", async () => {
+  const h = harness("2026-10-27T05:30:00Z");
+  cleanups.push(() => h.close());
+  h.core.agent = {
+    executionMode: "tools-v2",
+    interpret: async () => ({
+      action_groups: [],
+      clarification: null,
+      reply_intent: "discussion",
+      discussion: "好",
+    }),
+    close() {},
+  } as any;
+  const input = { ...h.input("hi"), channel: "qq" as const };
+  await h.core.receive(input);
+  h.store.db.prepare("UPDATE inbox SET status='processing' WHERE id=?").run(input.id);
+  (h.core as any).processing = true;
+  (h.core as any).processingSince = Date.now() - 10 * 60 * 1000;
+  await h.core.processPending();
+  expect((h.core as any).processing).toBe(false);
+  expect(
+    h.store.db.prepare("SELECT status,error_code FROM inbox WHERE id=?").get(input.id),
+  ).toMatchObject({ status: "failed", error_code: "TURN_TIMEOUT" });
+});
+
 it("maintenance round trips keep the degraded reasons that caused them", async () => {
   const h = harness("2026-10-27T04:00:00Z");
   cleanups.push(() => h.close());

@@ -115,7 +115,10 @@ export class Core {
   agent?: AgentAdapter;
   summaryError: string | null = null;
   private processing = false;
+  private processingSince = 0;
   private foregroundStreak=0;
+  /** A single-flight guard without a bound starves every later message. */
+  private readonly guardLimitMs = 150_000;
   operationKey(input:Input,actions:Action[],identity:string) {
     const literal=literalReportText(input.text);
     const normalized=literal !== null && actions.length === 1 && actions[0].type === "report_automation"
@@ -1839,8 +1842,35 @@ export class Core {
     return context;
   }
   async processPending() {
-    if (this.processing || !this.agent || this.stopping) return;
+    if (this.processing && !this.stopping) {
+      // Release a guard whose turn left no evidence behind, and fail a turn
+      // that has been "processing" far beyond any model budget. Otherwise one
+      // stuck await would quietly stop every future message.
+      const elapsed = this.processingSince ? Date.now() - this.processingSince : 0;
+      if (elapsed > this.guardLimitMs) {
+        const live = this.store.db
+          .prepare("SELECT id FROM inbox WHERE status='processing'")
+          .all() as { id: string }[];
+        if (live.length)
+          for (const row of live)
+            this.store.db
+              .prepare(
+                "UPDATE inbox SET status='failed',processed_at=?,error_code='TURN_TIMEOUT' WHERE id=?",
+              )
+              .run(this.store.now(), row.id);
+        this.processing = false;
+        this.processingSince = 0;
+        this.emit("runtime_degraded", {
+          code: "PROCESSING_GUARD_RECOVERED",
+          elapsed_ms: elapsed,
+          abandoned: live.length,
+        });
+      }
+      if (this.processing) return;
+    }
+    if (!this.agent || this.stopping) return;
     this.processing = true;
+    this.processingSince = Date.now();
     this.idle = new Promise((resolve) => {
       this.releaseIdle = resolve;
     });
@@ -2340,6 +2370,7 @@ export class Core {
       }
     } finally {
       this.processing = false;
+      this.processingSince = 0;
       this.releaseIdle?.();
     }
   }
