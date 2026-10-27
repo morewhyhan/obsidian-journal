@@ -28,4 +28,7 @@ const manifest={format:1,service_version:pkg.version,source_commit:commit,source
   plugin_version:"1.0.0",registry_schema:2,days_schema:1,sql_schema:1,calendar_engine:"light-okr-v1",
   image_digests:"verified-at-deployment",files};
 atomicWrite(resource("release.json"),JSON.stringify(manifest,null,2)+"\n");
+// The manifest ships inside the image and the evaluation runner reads it as a
+// non-owner user; atomicWrite keeps vault data at 0600, which would hide it.
+fs.chmodSync(resource("release.json"),0o644);
 console.log(JSON.stringify({source_commit:commit,source_hash:manifest.source_hash,files:files.length}));
