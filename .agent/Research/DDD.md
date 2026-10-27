@@ -745,3 +745,74 @@ MVP先从正常记录中观察重复交代次数、无效请示、更正/手工�
 3. 部署带快照回滚的候选，并核对运行文件与提示词指纹；
 4. G11/G12/G14 的剩余部分：父目录竞态声明、degraded/draining 完整门禁、分层证据重建。证据。实现未完成和验证未覆盖都明确保留，不能通过改写目标或删测试收口。
 
+### 15.5 服务器部署、真实模型与灾备演练（2026-10-27 晚）
+
+本节取代15.4中已完成的四项，记录本轮在 `162.211.183.120` 上实际发生的部署与证据。数字全部来自本轮命令输出；未发生的步骤明确列为未发生。
+
+#### 15.5.1 G11/G12/G14 的代码收口
+
+| 项 | 本轮实际修改 | 现在可以说的话 |
+| --- | --- | --- |
+| G12 生命周期 | 新增 `apps/core/lifecycle.ts`：关闭式迁移表 `starting→recovering→migrating→ready⇄degraded→{draining,maintenance}→stopped`，非法迁移抛 `LIFECYCLE_TRANSITION`；degraded 记录原因；`acceptsWork`/`acceptsBackground` 两道门禁；启动时按持久化的 recovery_guard 与 replay 窗口进入 degraded，不再默认 ready；解除最后一个恢复范围时清除对应原因；`/readyz` 返回 state/reasons/accepts_work | 状态机、降级入口、排空与停止门禁都在代码里，`tests/lifecycle.test.ts` 7 项覆盖非法迁移、降级仍可办理业务、draining 拒绝新交代（503）与业务写入（403）、停止后拒绝写与库访问、readyz 三态 |
+| G11 父目录竞态 | `VaultFiles` 增加 `writerGuard`，由 Store 在取得独占写锁后安装；锁丢失即拒绝库访问（503）。注释写明路径检查与打开之间仍可能被宿主级写者换掉父目录，由单写者部署边界承担 | 这是声明加可观测断言，不是竞态修复；不能声称已消除 TOCTOU |
+| G14 分层证据 | 确定性层重建为本轮 28 文件 343 用例；真实模型层见15.5.3；QQ 层见15.5.4；部署层见15.5.2 | 各层分别给证据，没有互相顶替 |
+
+#### 15.5.2 部署事实（不是演练，是生产切换）
+
+| 项目 | 值 |
+| --- | --- |
+| 代码 | 提交 `30165ec`（清单基线 `b72fdc7`），服务树统一为 LF |
+| 镜像 | `private-secretary:30165ec`，运行中 digest `sha256:0b98079a04d0f8ade247f00968b95d4c1f57cc89ac0f5b31766edc0c017b50cd` |
+| 发布指纹 | `resources/release.json` 的 `source_hash = sha256:e633fcdacc383b0351b0bfba5ee7fa88ec6974c688e52c3104d7316e25d35680`，94 个文件，与本机 `npm run build` 结果逐文件一致 |
+| 生效提示词 | 库内覆盖 execution `c451d864…`、persona `33dffc67…`、system `c2b38059…`、workflows `a494bf50…`（11,223 tokens，占输入预算 34%） |
+| 插件 | `main.py 3953132…`、`bridge.py d51ce2e…`、`tools.json 292525a…`、`model_contract.py 5dbddc3…`，与仓库一致 |
+| 部署自检 | `check-deployment.py --project deploy` → `passed: true`，15 项容器检查 + 4 项主机检查（含 NTPSynchronized=yes、vault 为本地文件系统真目录）全过 |
+| 未重建 | napcat 容器保留原样，QQ 登录卷未动 |
+| 回滚材料 | 旧镜像 `private-secretary:before-56e50f0`、旧树 `/root/deploy-backups/tree-pre-56e50f0.tgz`、库快照 `vault-pre-56e50f0.tgz`、配置备份 `config-pre-budget-*.json` |
+
+本轮由演练发现并修掉的四个发布缺陷（都不是配置问题）：
+
+1. `deploy/Dockerfile` 的构建阶段没有 COPY `integrations/`、`deploy/`，而 `scripts/release.ts` 要遍历它们生成清单，镜像构建直接失败；
+2. 清单排序用 `localeCompare`，Windows 与 Linux 构建镜像对中文文件名排序不同，同一份字节产生不同 `source_hash`（改为按码点排序）；
+3. `release.json` 由 `atomicWrite` 写成 0600，非属主进程读不到：评测容器一启动就 `EACCES`，首批场景全灭；
+4. 服务树是 CRLF，Linux 侧 shell 脚本带回车；已在 `.gitattributes` 固定 `eol=lf` 并整树归一化。
+
+#### 15.5.3 真实模型评测（同一镜像加线上生效提示词）
+
+评测方式：`scripts/evaluate-model.py` 在隔离网络里起真实镜像，模型走 Core 代理，提示词用库内生效覆盖，不接触个人库。
+
+| 轮次 | 范围 | 结果 | 结论 |
+| --- | --- | --- | --- |
+| 第1轮 | 38 个场景 | 15 通过 / 23 失败 | 21 个失败是 `MODEL_INPUT_LIMIT`（被客户端折叠成 `AGENT_UNAVAILABLE`），2 个是检查项失败（E13、E14） |
+| 修复 | 见下 | — | 根因是部署提示词 11,223 tokens 占满 16,384 预算的 68%，每轮加上下文必然超限 |
+| 第2轮 | 第1轮失败的 23 个 | 17 通过 / 6 失败 | 合计 32/38 通过，失败 6 项见下 |
+
+修复内容：
+
+- `agent-client.ts` 透传 `MODEL_INPUT_LIMIT`/`MODEL_PROVIDER_FAILED`/`MODEL_INVALID_FINAL`，不再把所有模型侧失败说成服务不可用；
+- `compatibility-runtime.ts` 增加启动门禁：生效提示词超过输入预算 55% 就 `PROMPT_BUDGET_EXCEEDED` 启动失败，避免每一轮才失败；
+- 部署配置把 `agent.budget` 调为输入 32,768 / 输出 4,096 / 每日 240 次 / 每日 2,000,000 tokens（依据：11,223 token 提示词加上下文）；
+- 评测脚手架支持 `SECRETARY_EVAL_BUDGET`，保证评测算的是部署实际预算。
+
+仍未通过的 6 项（保留样本，不改口径）：E14 调度提醒没有沿用真实下一步；E15 约定检查时刻没有按实际时刻保存；E19 到点没有产生小时回顾；N06 本轮 `MODEL_PROVIDER_FAILED`（提供方侧，需重跑确认是否偶发）；N08 保存下一步前没有先回看旧措辞；N11 没有正式保存接续责任与未来检查。
+
+#### 15.5.4 真实 QQ：当前是断线，不是没测
+
+- 最近一条成功出站 `2026-10-26T02:30:12Z`；此后 `outbox` 有 8 条 `expired`，没有发送记录。
+- NapCat 仍在运行，但 QQ 登录态失效：容器内 `/app/napcat/cache/qrcode.png` 每约 2 分钟刷新一次，即客户端在等扫码登录；`/healthz` 的 `qq.connected` 为 false。
+- 结论：真实 QQ 闭环本轮未取得证据，原因是需要手机扫一次码，不是代码问题；恢复登录后应重跑交代→办理→定时出站→反馈→日记更新→重启接续。
+
+#### 15.5.5 灾备演练（已做，不是计划）
+
+1. `backup-data` 在数据库副本上生成 `secretary-*.enc.json`（335,963 字节，AES-256-GCM，密钥在库外 `/etc/secretary/backup.key`）；
+2. `restore-data` 恢复到新空目录：`{"restored_files":96,"active_delivery_restored":false,"recovery_guard":true}`；
+3. 恢复库启动新镜像：`{"ready":true,"state":"degraded","reasons":["RECOVERY_GUARD_ACTIVE","REPLAY_WINDOW_OPEN"],"accepts_background":false}`，降级入口、防重窗口、后台门禁同时在真数据上生效；
+4. 双向演练：真实库副本先由新镜像启动为 ready，再由旧镜像启动仍为 ready（回滚兼容）；
+5. 未做：异地存储与定期自动备份调度（`SECRETARY_BACKUP_DIR` 尚未接入 compose），RPO/RTO 不宣称达标。
+
+#### 15.5.6 本轮仍然没有的
+
+- 7/30/90 天真实使用观察（需要时间，不能补测）；
+- 真实 QQ 闭环（需扫码后重跑）；
+- 6 个失败场景的修复与再验证；
+- 自动快照备份的调度与异地副本。
