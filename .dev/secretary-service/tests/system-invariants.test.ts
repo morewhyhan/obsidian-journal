@@ -23,6 +23,25 @@ function setup(time = "2026-10-25T01:00:00Z") {
   return h;
 }
 type Harness = ReturnType<typeof setup>;
+it("I13 a pause aimed at a non-business id is refused instead of claiming contact stopped", async () => {
+  const h = setup();
+  const created = await h.run(taskAction);
+  const taskId = created.updated_ids[0];
+  await expect(
+    h.run({ type: "pause_contact", target_id: "user-owner", ends_at: "2026-10-26T00:00:00Z" }),
+  ).rejects.toMatchObject({ code: "PAUSE_TARGET_INVALID" });
+  expect(h.store.registry().controls).toHaveLength(0);
+  await h.run({ type: "pause_contact", target_id: taskId });
+  expect(h.store.registry().controls[0]).toMatchObject({
+    scope: "item",
+    target_id: taskId,
+  });
+  await h.run({ type: "pause_contact" });
+  expect(h.store.registry().controls[1]).toMatchObject({
+    scope: "global",
+    target_id: null,
+  });
+});
 async function turn(h: Harness, text: string) {
   const input = h.input(text);
   await h.core.receive(input);

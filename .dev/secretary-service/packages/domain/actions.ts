@@ -1196,6 +1196,24 @@ export function applyActions(
         break;
       }
       case "pause_contact": {
+        // A pause aimed at an id that is not a real business object pauses
+        // nothing while the assistant can still tell the user it stopped
+        // everything. Refuse instead of recording a hollow control.
+        if (a.target_id) {
+          const exists = [
+            ...registry.tasks,
+            ...registry.habits,
+            ...registry.plans,
+            ...(registry.automations ?? []),
+            ...registry.proposals,
+          ].some((x) => x.id === a.target_id);
+          if (!exists)
+            throw new AppError(
+              "PAUSE_TARGET_INVALID",
+              "暂停对象不存在：需要停掉全部主动联系时不要填 target_id；只停某件事时用任务、习惯、安排或自动化的 id",
+              400,
+            );
+        }
         const ends = a.ends_at
           ? timestamp(a.ends_at)
           : DateTime.fromISO(c.now, { zone: c.zone })
