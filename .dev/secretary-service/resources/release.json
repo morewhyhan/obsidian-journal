@@ -1,9 +1,9 @@
 {
   "format": 1,
   "service_version": "0.1.0",
-  "source_commit": "254183d24be9b2a700867f7d7ef0b8ce55b8c6cf",
+  "source_commit": "e676f44d54e9952d63ea84d5a137cf35a8bb644b",
   "source_commit_is_base_only": true,
-  "source_hash": "sha256:c345fff5b22f92fbcf788473e6d2bfb4016f8ad9e64ff93f176e1d85c14090b7",
+  "source_hash": "sha256:e0ac0b73905b8c44e11e03d72e086a73e9074b5e7c5b0b3786ea14d6ece7cc44",
   "lock_hash": "sha256:a1340b831039fad6ccb59eea32648172911a3773627c3f9113f507112401a651",
   "tools_hash": "sha256:25f0f499a36e456a3129cbfe5fc70ae7d748570350f69bb4a0f36b2408d5eec5",
   "plugin_version": "1.0.0",
@@ -15,7 +15,7 @@
   "files": [
     {
       "path": "apps/core/agent-client.ts",
-      "hash": "sha256:2defbd346ca67b7a7ba518acc7da9c2fcd970ef9e30df3a23301a379f69098c7"
+      "hash": "sha256:9fc9a7be6e26fe8bb8a16367d8fd04af14ccc3d79cd74b09c180657c01f52952"
     },
     {
       "path": "apps/core/agent-runtime.ts",

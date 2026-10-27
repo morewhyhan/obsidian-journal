@@ -121,7 +121,10 @@ export class AstrBotClient implements AgentAdapter {
         channel: "core",
         actor_ref: "self-test",
         external_id: "self-test",
-        text: "模型协议自检：只调用submit_proposal一次，action_groups为空，clarification为null，reply_intent为discussion，discussion为ready。不得创建事项。",
+        // Native mode has no submit_proposal tool; asking for one made the
+        // model explain the mismatch instead of answering, and the failed
+        // self-test then disabled the agent for every incoming message.
+        text: "模型协议自检：不要调用任何工具，也不要创建或修改任何事项；直接回复 ready，action_groups 为空，clarification 为 null，reply_intent 为 discussion。",
         occurred_at: new Date().toISOString(),
       },
       {
@@ -134,7 +137,8 @@ export class AstrBotClient implements AgentAdapter {
     if (
       result.action_groups.length ||
       result.clarification !== null ||
-      result.discussion !== "ready"
+      !(result.discussion ?? "").trim() ||
+      (result.discussion ?? "").length > 200
     )
       throw new AppError(
         "MODEL_SELF_TEST_FAILED",

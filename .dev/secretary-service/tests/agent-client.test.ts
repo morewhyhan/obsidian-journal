@@ -1,10 +1,12 @@
 import { afterEach, it, expect, vi } from "vitest";
 import { AstrBotClient } from "../apps/core/agent-client.js";
 import { loadConfig } from "../apps/core/config.js";
-import { atomicWrite } from "../apps/core/files.js";
+import { atomicWrite, hash } from "../apps/core/files.js";
+import { AGENT_TOOLS } from "../packages/contracts/agent-tools.js";
 import { temporary, removeTemporary } from "./helpers.js";
 import path from "node:path";
 afterEach(() => vi.unstubAllGlobals());
+const SENT_TEXT = (body: any) => String(body?.input?.text ?? "");
 const input = {
   id: "normal",
   channel: "web",
@@ -73,6 +75,21 @@ it("a full model input budget is reported as such and never as an unreachable ag
   expect(error).toMatchObject({ code: "MODEL_INPUT_LIMIT", details: { reason: "ValueError" } });
   expect(error.message).not.toContain("PRIVATE");
   expect(fetch).toHaveBeenCalledTimes(1);
+});
+it("startup self-test does not ask native mode for a legacy tool call and accepts a plain answer", async () => {
+  const sent: any[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (url: string, opts: any) => {
+    if (url.endsWith("/healthz"))
+      return new Response(JSON.stringify({ protocol: "tools-v2", tools_hash: hash(JSON.stringify(AGENT_TOOLS)) }));
+    sent.push(JSON.parse(opts.body));
+    return new Response(JSON.stringify({
+      action_groups: [], clarification: null, reply_intent: "discussion",
+      discussion: "好的，自检通过。",
+    }));
+  }));
+  const client = new AstrBotClient("http://astrbot", "token", 30000, "");
+  await expect(client.check()).resolves.toBeUndefined();
+  expect(SENT_TEXT(sent[0])).not.toContain("submit_proposal");
 });
 it("wording calls receive the communication view while execution keeps the protocol", async () => {
   const bodies: any[] = [];
