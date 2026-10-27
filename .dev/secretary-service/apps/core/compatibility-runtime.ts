@@ -27,7 +27,16 @@ export function loadRuntimeCombination(s:Store,env:NodeJS.ProcessEnv) {
   // The effective prompt set is the largest fixed part of every model request.
   // If it alone consumes most of the input reservation, every real turn is
   // refused later with MODEL_INPUT_LIMIT: fail at startup with the real reason.
-  const instructions=prompts.map(p=>p.text).join("\n\n");
+  const skillGuide=[
+    "",
+    "# 技能库",
+    "",
+    "方法、格式、流程类请求，先看 03. Manual/技能/ 有没有可复用的技能；索引在该目录 README。",
+    "用技能时按步骤做，偏离要说明原因；技能过时或更好用了，顺手改进它，而不是另写一份。",
+    "做完一次如果这套做法值得再用（用户说过“以后都这样”，或花了多轮才谈清），主动提议写成一条技能：先给名字和要点，征得同意后用 workspace 写入该目录，并在索引加一行。",
+    "一次性的会议记录、私人叙述不要写成技能。",
+  ].join("\n");
+  const instructions=prompts.map(p=>p.text).join("\n\n")+skillGuide;
   // One effective protocol: the native tool loop executes business changes.
   // A prompt line that still routes them through submit_proposal would fight
   // the bridge, which rejects that call in native mode.

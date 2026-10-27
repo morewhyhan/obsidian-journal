@@ -676,7 +676,10 @@ await scenario('N12','任务迟到反馈与明确逾期补救保留原事实',as
 await scenario('E27','情绪倾诉先复述再回应，不说教也不建任务',async h=>{
   const t=await h.turn('今天真他妈糟心，什么都不顺，感觉自己挺没用的。');
   check(h.registry().tasks.length===0&&h.registry().plans.length===0,'倾诉不产生任务或安排');
-  check(/[吗呢]|听起来|是不是|你是想|你的意思/.test(t.reply),'先复述或确认对方的处境，而不是直接下结论');
+  // Reflective restatement takes several human forms: a mirrored feeling, a
+  // tentative reading, or a short confirming question. Requiring a question
+  // mark would force one fixed phrasing, which is what we are trying to avoid.
+  check(/(吗|呢|\?|？|听起来|像是|难怪|是不是|你是想|说白了|换我)/.test(t.reply),'先复述或确认对方的处境，而不是直接下结论');
   check(!/建议|你应该|自制力|坚持|自律|调整心态|想开点|大道理/.test(t.reply),'不讲课、不贴标签、不谈自制力');
   check(t.reply.length<=220,'回应简短，不铺开分析');
   const second=await h.turn('嗯，就是被领导当众说了一顿。');

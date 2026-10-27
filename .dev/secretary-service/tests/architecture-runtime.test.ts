@@ -181,6 +181,7 @@ it("D25c a prompt that still routes business changes through submit_proposal is 
   const c=loadRuntimeCombination(h.store,{LLM_MODEL:"deepseek-flash"});
   expect(c.communication).not.toContain("input_mode=");
   expect(c.instructions).toContain("input_mode=");
+  expect(c.instructions).toContain("技能库");
   expect(c.communication).toContain("只负责表达");
   // Every deployment, including vault prompt overrides, gets the goal and
   // restatement rules from code rather than from a private prompt file.
