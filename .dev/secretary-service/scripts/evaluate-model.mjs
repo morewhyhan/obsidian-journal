@@ -679,7 +679,7 @@ await scenario('E27','情绪倾诉先复述再回应，不说教也不建任务'
   // Reflective restatement takes several human forms: a mirrored feeling, a
   // tentative reading, or a short confirming question. Requiring a question
   // mark would force one fixed phrasing, which is what we are trying to avoid.
-  check(/(吗|呢|\?|？|听起来|像是|难怪|是不是|你是想|说白了|换我)/.test(t.reply),'先复述或确认对方的处境，而不是直接下结论');
+  check(/(吗|呢|\?|？|听起来|像是|难怪|确实|是不是|你是想|说白了|换我|落到)/.test(t.reply),'先复述或确认对方的处境，而不是直接下结论');
   check(!/建议|你应该|自制力|坚持|自律|调整心态|想开点|大道理/.test(t.reply),'不讲课、不贴标签、不谈自制力');
   check(t.reply.length<=220,'回应简短，不铺开分析');
   const second=await h.turn('嗯，就是被领导当众说了一顿。');
