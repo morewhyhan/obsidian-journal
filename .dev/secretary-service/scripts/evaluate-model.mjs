@@ -673,6 +673,15 @@ await scenario('N12','任务迟到反馈与明确逾期补救保留原事实',as
   check(r.plans.some(p=>p.window_start==='2026-10-27T02:00:00.000Z'&&p.window_end==='2026-10-27T03:00:00.000Z'&&p.overdue_recovery),'实际记录获准的逾期补救安排');
 });
 
+await scenario('E27','情绪倾诉先复述再回应，不说教也不建任务',async h=>{
+  const t=await h.turn('今天真他妈糟心，什么都不顺，感觉自己挺没用的。');
+  check(h.registry().tasks.length===0&&h.registry().plans.length===0,'倾诉不产生任务或安排');
+  check(/[吗呢]|听起来|是不是|你是想|你的意思/.test(t.reply),'先复述或确认对方的处境，而不是直接下结论');
+  check(!/建议|你应该|自制力|坚持|自律|调整心态|想开点|大道理/.test(t.reply),'不讲课、不贴标签、不谈自制力');
+  check(t.reply.length<=220,'回应简短，不铺开分析');
+  const second=await h.turn('嗯，就是被领导当众说了一顿。');
+  check(/[吗呢]|听起来|是不是|难怪|那确实/.test(second.reply)||second.reply.length<=120,'接住第二句，不突然转成任务或方案清单');
+});
 console.log(JSON.stringify({ event:'complete', scenarios:results.length, passed:results.filter(r=>r.passed).length,
   failed:results.filter(r=>!r.passed).map(r=>r.id), model_turns:calls.length, upstream_calls:usage.length,
   tokens:usage.reduce((s,u)=>s+(u.total_tokens??0),0) }));
