@@ -61,6 +61,10 @@ it("T36 authenticated export restores exact Markdown, attachments and private ru
     h.store.files.resolve(".agent/data/do-not-export.secret", "internal"),
     "secret-exclusion-fixture",
   );
+  atomicWrite(
+    h.store.files.resolve(".agent/prompts/persona.md", "internal"),
+    "私人角色覆盖：只按原文汇报。\n",
+  );
   await h.core.execute(
     {
       id: "rule-export",
@@ -106,6 +110,11 @@ it("T36 authenticated export restores exact Markdown, attachments and private ru
     restored.registry().user_rules?.find((x) => x.key === "contact.enabled")
       ?.value,
   ).toBe(false);
+  expect(
+    restored.files
+      .readBytes(".agent/prompts/persona.md", "internal")
+      .toString("utf8"),
+  ).toBe("私人角色覆盖：只按原文汇报。\n");
   expect(restored.recoveryUntil).toBeTruthy();
   expect(
     restored.db.prepare("SELECT count(*) n FROM inbox").get(),

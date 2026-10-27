@@ -335,6 +335,9 @@ export class Store {
     walk("Attachment", (p) => !path.posix.basename(p).startsWith("."));
     walk(".agent/state", (p) => p.endsWith(".json"));
     walk(".agent/context", (p) => p.endsWith(".md"));
+    // Prompt overrides are part of the effective runtime combination; a restore
+    // that dropped them would silently swap the persona back to the defaults.
+    walk(".agent/prompts", (p) => p.endsWith(".md"));
     let bytes = 0;
     const files = [...paths].sort().map((p) => {
       const file = this.files.resolve(p, "internal"),
@@ -634,6 +637,7 @@ function restoreDataIntoStage(root: string, payload: unknown) {
           ((p.endsWith(".md") &&
             !p.split("/").some((x: string) => x.startsWith("."))) ||
             /^\.agent\/context\/[^/]+\.md$/.test(p) ||
+            /^\.agent\/prompts\/[^/]+\.md$/.test(p) ||
             /^\.agent\/state\/(?:[^/]+\/)*[^/]+\.json$/.test(p)))
     )
       throw new AppError("EXPORT_INVALID", "导出含有不允许恢复的文件");

@@ -1,9 +1,9 @@
 {
   "format": 1,
   "service_version": "0.1.0",
-  "source_commit": "4fa33d3f147fd5de32b0bf4da91fa4d58f2ef6e0",
+  "source_commit": "6eefbc39870f832fce7008c7766cb21f93153061",
   "source_commit_is_base_only": true,
-  "source_hash": "sha256:699b161408ecf5fa1749a6387a5e148d3f09bcfa6a6453200923cbba749ca52b",
+  "source_hash": "sha256:0d3ada1ba3b7e4e113569a728b4cfa44395806397158c74c713ac4d523047a49",
   "lock_hash": "sha256:a1340b831039fad6ccb59eea32648172911a3773627c3f9113f507112401a651",
   "tools_hash": "sha256:25f0f499a36e456a3129cbfe5fc70ae7d748570350f69bb4a0f36b2408d5eec5",
   "plugin_version": "1.0.0",
@@ -143,7 +143,7 @@
     },
     {
       "path": "apps/core/store.ts",
-      "hash": "sha256:e2907f122c0156c827f7d68a56266326884be5f2269485cf5216e6d25495c778"
+      "hash": "sha256:2364d362d03294e763587ecb17be6d445b0f3cd43cb7b7ebcb3654309199652c"
     },
     {
       "path": "apps/core/token-counter.ts",
