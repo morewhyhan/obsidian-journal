@@ -161,6 +161,24 @@ export class AssistantRuntime {
       this.recentlyInTouch(now)
     );
   }
+  /**
+   * One question per silence episode: after asking, wait for the person to say
+   * something before asking again, even if the next slot is due.
+   */
+  awaitingCheckinReply(automationId: string, now = this.s.now()) {
+    const asked = this.s.db
+      .prepare(
+        "SELECT max(o.sent_at) AS at FROM outbox o, json_each(o.source_versions_json) v WHERE o.status='sent' AND v.key LIKE ?",
+      )
+      .get("occ:" + automationId + ":%") as { at: string | null };
+    if (!asked?.at) return false;
+    const replied = this.s.db
+      .prepare(
+        "SELECT max(received_at) AS at FROM inbox WHERE status='processed' AND channel IN ('qq','web')",
+      )
+      .get() as { at: string | null };
+    return !replied?.at || Date.parse(replied.at) < Date.parse(asked.at);
+  }
   /** True when the last message or reply is recent enough to answer a check. */
   recentlyInTouch(now = this.s.now(), windowMinutes = 120) {
     const last = this.s.db
@@ -613,7 +631,7 @@ export class AssistantRuntime {
             !o.checkin_status,
         );
       if (!occurrence) continue;
-      if (this.knownBusy(r, load, now)) {
+      if (this.knownBusy(r, load, now) || this.awaitingCheckinReply(a.id, now)) {
         occurrence.checkin_status = "skip";
         ids.push(occurrence.id);
         continue;

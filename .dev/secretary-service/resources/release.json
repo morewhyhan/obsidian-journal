@@ -1,9 +1,9 @@
 {
   "format": 1,
   "service_version": "0.1.0",
-  "source_commit": "bee50d1c011ae4aa74c56e80e6e0b4c2d3db6d8c",
+  "source_commit": "e94524b44d2f285ef88fa92b8d51cfbe0d7f4afa",
   "source_commit_is_base_only": true,
-  "source_hash": "sha256:602a647a4f025f9a51445e86b058069715024ca123a01d3aa373820fa7d57201",
+  "source_hash": "sha256:f1cad8ebb1aa68d28e5dd82dc12d9f23cf6651795d7f01165608068a15b6c2c6",
   "lock_hash": "sha256:a1340b831039fad6ccb59eea32648172911a3773627c3f9113f507112401a651",
   "tools_hash": "sha256:d8fffc99b92a27a2a591d81cf5554ea22adec02c071e03a2be4b6686a811d47b",
   "plugin_version": "1.0.0",
@@ -31,7 +31,7 @@
     },
     {
       "path": "apps/core/assistant.ts",
-      "hash": "sha256:0eed661aa6a7df87f56c09dfd619f7b2cc9f525221091504017bb316bebeeb59"
+      "hash": "sha256:ec975f44db0e5f81072d578152041208b94a86e4bfcf5c95461f943e097f5ff9"
     },
     {
       "path": "apps/core/astrbot-channel.ts",
