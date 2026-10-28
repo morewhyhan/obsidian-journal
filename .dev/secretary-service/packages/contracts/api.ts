@@ -213,6 +213,10 @@ export const actionSchema = {
       delay_seconds: { type: "integer", minimum: 1, maximum: 2678400 },
       body: string(1000),
       to_diary: { type: "boolean" },
+      status_check: {
+        type: "boolean",
+        description: "这是“看看用户现在在做什么”的状态检查：一旦近期聊天或记录已经说明近况，就不发出这一轮；只有长时间没有任何动静时才问。",
+      },
       strict: { type: "boolean" },
       control: { enum: ["pause", "resume", "stop", "skip_today", "complete"] },
       occurrence_id: string(100),

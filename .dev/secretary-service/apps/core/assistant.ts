@@ -155,8 +155,26 @@ export class AssistantRuntime {
       ) ||
       r.tasks.some(
         (t) => !!t.planning?.focus_until && t.planning.focus_until > now,
-      )
+      ) ||
+      // Talking to the assistant is itself evidence of what the person is
+      // doing. A status check that already knows the answer is noise.
+      this.recentlyInTouch(now)
     );
+  }
+  /** True when the last message or reply is recent enough to answer a check. */
+  recentlyInTouch(now = this.s.now(), windowMinutes = 120) {
+    const last = this.s.db
+      .prepare(
+        "SELECT max(received_at) AS at FROM inbox WHERE status='processed' AND channel IN ('qq','web')",
+      )
+      .get() as { at: string | null };
+    const sent = this.s.db
+      .prepare("SELECT max(sent_at) AS at FROM outbox WHERE status='sent'")
+      .get() as { at: string | null };
+    const since = Date.parse(now) - windowMinutes * 60000;
+    return [last?.at, sent?.at]
+      .filter((value): value is string => !!value)
+      .some((value) => Date.parse(value) >= since);
   }
   preferences(
     query = "",

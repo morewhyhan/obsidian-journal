@@ -1,11 +1,11 @@
 {
   "format": 1,
   "service_version": "0.1.0",
-  "source_commit": "1681c28a83021c2f895eecf0a891092decfdd8e2",
+  "source_commit": "bee50d1c011ae4aa74c56e80e6e0b4c2d3db6d8c",
   "source_commit_is_base_only": true,
-  "source_hash": "sha256:5d99ed3af97e91282c0a19e729d6ff305d836c59244867fa74b38c05bbbdd393",
+  "source_hash": "sha256:602a647a4f025f9a51445e86b058069715024ca123a01d3aa373820fa7d57201",
   "lock_hash": "sha256:a1340b831039fad6ccb59eea32648172911a3773627c3f9113f507112401a651",
-  "tools_hash": "sha256:25f0f499a36e456a3129cbfe5fc70ae7d748570350f69bb4a0f36b2408d5eec5",
+  "tools_hash": "sha256:d8fffc99b92a27a2a591d81cf5554ea22adec02c071e03a2be4b6686a811d47b",
   "plugin_version": "1.0.0",
   "registry_schema": 2,
   "days_schema": 1,
@@ -31,7 +31,7 @@
     },
     {
       "path": "apps/core/assistant.ts",
-      "hash": "sha256:38f3a04e0b0ad7b5ca6d3009ae0c2661352534396e91e1ff03fa0030d83b2555"
+      "hash": "sha256:0eed661aa6a7df87f56c09dfd619f7b2cc9f525221091504017bb316bebeeb59"
     },
     {
       "path": "apps/core/astrbot-channel.ts",
@@ -55,7 +55,7 @@
     },
     {
       "path": "apps/core/compatibility-runtime.ts",
-      "hash": "sha256:e81812c5b54d5cec61844a21bd8dcf2d03f38da1d17ce9c345bfda781030c363"
+      "hash": "sha256:4ceb917c493e6c71fd8f0f2d0fe9ce3edd83b1c7830f726d128fc4ed8aeb16c7"
     },
     {
       "path": "apps/core/compatibility.ts",
@@ -207,7 +207,7 @@
     },
     {
       "path": "integrations/astrbot/astrbot_plugin_secretary/main.py",
-      "hash": "sha256:da07d39c2aef7a0b89081b938c41f160e30ba35813a99bc762035a9b1e14fb47"
+      "hash": "sha256:8e257534322732ee83dc8929ba9bb354317614f29879dc15b504517f1528dd2c"
     },
     {
       "path": "integrations/astrbot/astrbot_plugin_secretary/metadata.yaml",
@@ -235,7 +235,7 @@
     },
     {
       "path": "packages/contracts/api.ts",
-      "hash": "sha256:c0c50c7753c3aafc3fbe305081c81b8977f80041a9ff2d9305a7805c5925447e"
+      "hash": "sha256:89edd4aa9f6e2dc77cf1743abb51baf4c5cfd141928be009758fc0e5fba0b10a"
     },
     {
       "path": "packages/contracts/markdown.ts",
@@ -303,15 +303,15 @@
     },
     {
       "path": "resources/prompts/execution.md",
-      "hash": "sha256:e5b9c9ec5121406ce675bc5c3f33f1fb95d96478bbc6a0153987613a86524676"
+      "hash": "sha256:4801f7d6a1d596913141f265b9d1f5e668d4042075464b5ce3deea39ac0acd48"
     },
     {
       "path": "resources/prompts/persona.md",
-      "hash": "sha256:b5c8444e223ed1cc935775c61d1912b6803d13b9a9f942ae14e9570c15fb3589"
+      "hash": "sha256:517699588add0091cc9e787ee7a0e40a3df87bcc3a4168af649fd87835c40580"
     },
     {
       "path": "resources/prompts/system.md",
-      "hash": "sha256:4e732dd51ed7c201a785272c9f73b7e53db7b7eef2a2f5626c066f39f6300a97"
+      "hash": "sha256:947178d86f6cb61529188159724261d258665359ada836b29ccacee103aabe1b"
     },
     {
       "path": "resources/prompts/workflows.md",

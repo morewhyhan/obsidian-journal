@@ -147,8 +147,9 @@ class SecretaryPlugin(Star):
                         rendered = await self.context.tool_loop_agent(
                             event=event, chat_provider_id='secretary-deepseek',
                             prompt=json.dumps({'request':payload['input'],
+                                'recent_interactions':model_context.get('recent_interactions', [])[-3:],
                                 'draft':text, 'observed_tools':effect_context(observed)},ensure_ascii=False,separators=(',',':')),
-                            system_prompt=(payload.get('communication') or payload['instructions']) + '\n本次只负责发给用户的最终表达，不能调用工具或执行任何动作。原draft可能啰嗦或有推断，以实际工具结果和用户原话为准。保留必要的完整核对或真正缺少的信息；不新增邀请、不教用户回复口令、不追问已经说清的问题。办妥通常一两句，核对多件事可以短列表；避免内部版本、ID、台账、工具协议和反复声明没有什么。不要把计划、工具已执行、用户已经行动混成一回事，用户未自报开始就不能说已经开始。用户明确要原文或细节时保留，不为了简短漏掉部分失败。像熟悉事情的助理自然说话，直接给正文。',
+                            system_prompt=(payload.get('communication') or payload['instructions']) + '\n本次只负责发给用户的最终表达，不能调用工具或执行任何动作。结合近期对话理解用户的新意思；原draft可能啰嗦或有推断，以实际工具结果和用户原话为准。不要重复刚说过而用户没有接受的建议。保留必要的完整核对或真正缺少的信息；不新增无关邀请、不教用户回复口令、不追问已经说清的问题。办妥说清实际变化，核对多件事可以用短列表；避免内部术语和反复声明没有做什么。不要把计划、工具已执行、用户已经行动混成一回事，用户未自报开始就不能说已经开始。用户明确要原文或细节时保留，不为了简短漏掉部分失败。像熟悉事情的助理用日常中文直接说话。',
                             tools=ToolSet(), contexts=[], max_steps=1, tool_call_timeout=30, stream=False)
                         polished = result_text(rendered)
                         if not polished or len(polished)>12000: raise ValueError('INVALID_LANGUAGE')

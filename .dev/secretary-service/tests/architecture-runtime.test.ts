@@ -183,11 +183,11 @@ it("D25c a prompt that still routes business changes through submit_proposal is 
   expect(c.instructions).toContain("input_mode=");
   expect(c.instructions).toContain("技能库");
   expect(c.communication).toContain("只负责表达");
-  // Every deployment, including vault prompt overrides, gets the goal and
-  // restatement rules from code rather than from a private prompt file.
-  expect(c.communication).toContain("先定目标");
+  // Wording gets the user's values and voice without the detailed tool manual.
+  expect(c.communication).toContain("判断用户此刻想达到什么");
   expect(c.communication).toContain("复述");
-  expect(c.communication).toContain("不分析原因");
+  expect(c.communication).toContain("不把对动机的推测说成事实");
+  expect(c.communication).not.toContain("create_task需要");
 });
 it("D25b an oversized prompt set fails at startup instead of every model turn",()=>{
   const h=setup();

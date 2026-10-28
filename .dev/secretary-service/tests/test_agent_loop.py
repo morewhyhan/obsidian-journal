@@ -130,6 +130,21 @@ class AgentLoopTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(turn.captured['discussion'],'刚才那件事已按实际结果处理。')
         self.assertEqual(turn.captured['language_review'],'original_llm_answer')
 
+    async def test_language_pass_receives_recent_dialogue_without_full_private_context(self):
+        async def behavior(n,kwargs):
+            if n == 1:
+                return SimpleNamespace(completion_text='先把单词材料打开。')
+            rendered = json.loads(kwargs['prompt'])
+            self.assertEqual([x['text'] for x in rendered['recent_interactions']], ['之前一', '之前二', '我不想做'])
+            self.assertNotIn('private_document', rendered)
+            self.assertIsNone(kwargs['tools'].get_tool('secretary'))
+            return SimpleNamespace(completion_text='你是不想背单词，还是今天这个安排不合适？')
+        plugin,turn,calls=self.make(behavior,native=True)
+        turn.payload['context']={'recent_interactions':[{'text':s,'reply':''} for s in ['更早', '之前一', '之前二', '我不想做']], 'private_document':'do not forward'}
+        await plugin.run_secretary(turn)
+        self.assertEqual(len(calls),2)
+        self.assertEqual(turn.captured['language_review'],'done')
+
     async def test_valid_submission_has_no_extra_loop(self):
         async def behavior(_n,kwargs):
             await kwargs['tools'].get_tool('submit_proposal').handler(None,**PROPOSAL)
