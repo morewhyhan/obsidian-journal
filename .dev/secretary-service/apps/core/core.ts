@@ -1961,6 +1961,35 @@ export class Core {
     return { queued: true };
   }
 
+  /**
+   * An honest notice when the assistant cannot answer right now (model offline or
+   * the day's quota is gone). Silence looks like a broken product; the message the
+   * user sent stays queued, and this only says why nothing came back yet.
+   */
+  queueNotice(input: Input, body: string) {
+    const now = this.store.now();
+    const inserted = this.store.db
+      .prepare(
+        "INSERT OR IGNORE INTO outbox(id,channel,recipient_ref,dedupe_key,target_refs_json,source_versions_json,metadata_json,message_kind,body,content_hash,scheduled_at,expires_at,counts_as_proactive,created_at,updated_at) VALUES(?,?,?,?,?,?,?, 'system',?,?,?,?,0,?,?)",
+      )
+      .run(
+        id("out"),
+        "qq",
+        input.actor_ref,
+        input.id + ":notice",
+        "[]",
+        JSON.stringify({ revocation: this.store.revocationRevision() }),
+        JSON.stringify({ reply_group: input.id, sequence: 0, purpose: "notice", total: 0, wording: "notice" }),
+        body,
+        hash(body),
+        now,
+        DateTime.fromISO(now).plus({ hours: 12 }).toUTC().toISO()!,
+        now,
+        now,
+      );
+    return inserted.changes > 0;
+  }
+
   /** Bounded record of a background planning gap, surfaced to the next turn. */
   recordPlanningGap(message: string) {
     const entry = { at: this.store.now(), message: message.slice(0, 200) };

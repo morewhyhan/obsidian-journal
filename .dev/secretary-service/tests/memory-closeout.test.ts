@@ -241,3 +241,24 @@ it("A imported material is never handed to the model as a confirmed fact, and us
   expect(used.last_used_at).toBe(now);
   expect(used.used_event_ids).toEqual(["evt-1"]);
 });
+
+it("A a queued message gets one honest notice when the assistant cannot answer", async () => {
+  const h = harness("2026-10-31T09:00:00Z");
+  cleanups.push(() => h.close());
+  const now = h.store.now();
+  h.store.db
+    .prepare(
+      "INSERT INTO inbox(id,channel,actor_ref,external_id,body,metadata_json,received_at,occurred_at,status,seq) VALUES('n1','qq','owner','n1','现在几点了？','{}',?,?,'pending',1)",
+    )
+    .run(now, now);
+  const input = { id: "n1", channel: "qq", actor_ref: "owner", external_id: "n1", text: "", occurred_at: now };
+  expect(h.core.queueNotice(input as any, "模型暂时连不上，你这条我记着。")).toBe(true);
+  // Only one notice per message, even if the retry loop runs again.
+  expect(h.core.queueNotice(input as any, "模型暂时连不上，你这条我记着。")).toBe(false);
+  const rows = h.store.db
+    .prepare("SELECT body,status,json_extract(metadata_json,'$.purpose') p FROM outbox WHERE json_extract(metadata_json,'$.reply_group')='n1'")
+    .all() as any[];
+  expect(rows).toHaveLength(1);
+  expect(rows[0].p).toBe("notice");
+  expect(rows[0].body).toContain("模型暂时连不上");
+});

@@ -164,6 +164,42 @@ export async function createApp(options: AppOptions) {
         core.agent = undefined;
         // Without a log line, a failed self-test looks exactly like "the user
         // got no answer": messages sit pending and nothing is printed.
+        // After the third failure the assistant is visibly down; a queued message
+        // must not sit in silence with no explanation.
+        if (agentStatus.consecutive_failures === 3) {
+          try {
+            const budget = store.runtimeMeta().model_budget as
+              | { date?: string; requests?: number; tokens?: number }
+              | undefined;
+            const cfg = store.config.agent.budget;
+            const exhausted =
+              !!budget &&
+              budget.date === store.now().slice(0, 10) &&
+              (Number(budget.requests ?? 0) >= cfg.daily_requests ||
+                Number(budget.tokens ?? 0) >= cfg.daily_tokens);
+            const body = exhausted
+              ? "今天的模型调用额度用完了，明天 0 点恢复。你这条我记着，恢复后先回你。"
+              : "模型暂时连不上，你这条我记着，恢复后先回你。";
+            for (const row of store.db
+              .prepare(
+                "SELECT id,channel,actor_ref,body FROM inbox WHERE status='pending' ORDER BY seq LIMIT 3",
+              )
+              .all() as { id: string; channel: string; actor_ref: string; body: string | null }[])
+              core.queueNotice(
+                {
+                  id: row.id,
+                  channel: row.channel,
+                  actor_ref: row.actor_ref,
+                  external_id: row.id,
+                  text: row.body ?? "",
+                  occurred_at: store.now(),
+                } as any,
+                body,
+              );
+          } catch {
+            /* the notice is best effort; the queued message stays */
+          }
+        }
         console.error(
           JSON.stringify({
             event: "agent_self_test_failed",
