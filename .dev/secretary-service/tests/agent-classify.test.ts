@@ -119,3 +119,18 @@ it("C1 the prompt carries the conversation rhythm rules that keep replies natura
   expect(prompt).toContain("等了一会儿不等于必须说话");
   expect(prompt).toContain("用户插话后，先处理新话");
 });
+
+it("C1 the persona keeps sentences short and answers before explainers", () => {
+  const prompt = fs.readFileSync(
+    path.join(process.cwd(), "resources/prompts/persona.md"),
+    "utf8",
+  );
+  expect(prompt).toContain("## 句子这一层");
+  expect(prompt).toContain("一句话只说一件事");
+  expect(prompt).toContain("超过四十个字就断开");
+  expect(prompt).toContain("先给答案或结论");
+  expect(prompt).toContain("普通回答默认两到四句");
+  // The contrast example must stay, it is what actually moves the model.
+  expect(prompt).toContain("反例（不合格）");
+  expect(prompt).toContain("正例（合格）");
+});
