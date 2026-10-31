@@ -54,3 +54,28 @@ it("a list is sent as one message instead of one bubble per line", () => {
   const list = "今天还有这些：\n1. 背单词\n2. 午睡\n3. 早睡\n4. 运动";
   expect(splitMessages(list, { maxChars: 10, maxBubbles: 3 })).toEqual([list]);
 });
+
+it("as many bubbles as the content needs, one sentence each", () => {
+  const text = "先说第一件。然后第二件。再说第三件。最后第四件。还有第五件。";
+  const all = splitMessages(text, { maxChars: 10, maxBubbles: 0 });
+  expect(all).toHaveLength(5);
+  expect(all.join("")).toBe(text);
+});
+
+it("a new message cancels the previous answer's unsent bubbles", async () => {
+  const { harness } = await import("./helpers.js");
+  const h = harness("2026-10-31T10:00:00Z");
+  try {
+    const now = h.store.now();
+    h.store.db
+      .prepare(
+        "INSERT INTO outbox(id,channel,recipient_ref,dedupe_key,target_refs_json,source_versions_json,metadata_json,message_kind,body,content_hash,scheduled_at,expires_at,counts_as_proactive,created_at,updated_at,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      )
+      .run("b1", "qq", "owner", "old:reply", "[]", "{}", JSON.stringify({ reply_group: "old", sequence: 1, purpose: "reply" }), "receipt", "第一句。", "h", now, now, 0, now, now, "pending");
+    await h.core.receive({ id: "new-input", channel: "qq", actor_ref: "owner", external_id: "new-input", text: "等等，不是这个", occurred_at: now, reply_to: null } as any);
+    const row = h.store.db.prepare("SELECT status FROM outbox WHERE id='b1'").get() as any;
+    expect(row.status).toBe("cancelled");
+  } finally {
+    await h.close();
+  }
+});

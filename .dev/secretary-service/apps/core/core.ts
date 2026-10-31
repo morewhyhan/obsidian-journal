@@ -1649,6 +1649,14 @@ export class Core {
         input.occurred_at,
         seq,
       );
+    // The person just spoke again: whatever part of the previous answer has not
+    // left yet is already stale. Sent bubbles stay sent; the rest is cancelled and
+    // the new input decides what happens next.
+    this.store.db
+      .prepare(
+        "UPDATE outbox SET status='cancelled',finished_at=?,updated_at=? WHERE status='pending' AND message_kind='receipt' AND recipient_ref=? AND COALESCE(json_extract(metadata_json,'$.reply_group'),'')<>?",
+      )
+      .run(this.store.now(), this.store.now(), input.actor_ref, input.id);
     // Production Agent owns language understanding. Legacy API adapters retain
     // their old protocol, but no natural-language shortcut can pre-empt this loop.
     if (this.agent?.executionMode === "tools-v2") {
@@ -1879,7 +1887,7 @@ export class Core {
     // Native turns send like a person: 1-3 short bubbles, split at sentence ends.
     // A single over-long paragraph still respects the channel limit below.
     const bubbles = native
-      ? splitMessages(original, { maxChars: 55, maxBubbles: 3 }).flatMap((bubble) => {
+      ? splitMessages(original, { maxChars: 55, maxBubbles: 0 }).flatMap((bubble) => {
           if (bubble.length <= 1800) return [bubble];
           const parts: string[] = [];
           for (let i = 0; i < bubble.length; i += 1800) parts.push(bubble.slice(i, i + 1800));

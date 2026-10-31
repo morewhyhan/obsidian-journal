@@ -10,6 +10,7 @@ export function splitMessages(
   options: { maxChars?: number; maxBubbles?: number } = {},
 ) {
   const maxChars = options.maxChars ?? 55;
+  // 0 means "as many as the content needs": one sentence per bubble.
   const maxBubbles = options.maxBubbles ?? 3;
   const body = (text ?? "").trim();
   if (!body) return [];
@@ -33,7 +34,7 @@ export function splitMessages(
     } else current = candidate;
   }
   if (current) bubbles.push(current);
-  if (bubbles.length <= maxBubbles) return bubbles;
+  if (maxBubbles <= 0 || bubbles.length <= maxBubbles) return bubbles;
   // Too many small bubbles is as noisy as one wall of text: fold the tail in.
   return [...bubbles.slice(0, maxBubbles - 1), bubbles.slice(maxBubbles - 1).join("")];
 }
