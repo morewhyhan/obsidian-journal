@@ -234,7 +234,7 @@ export type PlanningSettings = {
   evening_time: string;
   availability: WeeklyWindow[];
   protected: WeeklyWindow[];
-  day_overrides: { date: string; windows: LocalWindow[] }[];
+  day_overrides: { date: string; windows?: LocalWindow[]; buffer_minutes?: number | null }[];
   buffer_minutes: number;
   max_task_minutes: number;
   max_tasks: number;
@@ -312,6 +312,9 @@ export type Followup = Entity & {
     step_id?:string;
     done_when?:import("./work.js").WorkDone;
     wake_on?: {kind:"ref_changed"|"matching_feedback";ref:import("./work.js").WorkRef}[];
+    /** Baseline versions captured when the work was saved; a change wakes it. */
+    wake_versions?: Record<string, number>;
+    last_wake?: { at: string; evidence: string[] };
     delegation?:import("./work.js").WorkDelegation;
     resolution?:import("./work.js").WorkResolution;
     paused_from?:"open"|"waiting_user"|"waiting_condition";

@@ -9,6 +9,13 @@ import {
   type Day,
 } from "../../packages/contracts/types.js";
 import { VaultFiles, atomicWrite, hash, id, serialize } from "./files.js";
+import { FACTS_PATH, appendFactTo, readFacts } from "./facts.js";
+import {
+  emptyFactFile,
+  validateFactFile,
+  type FactFile,
+} from "../../packages/contracts/facts.js";
+import type { RevocationRecord } from "./facts.js";
 import { resource,loadConfig, type Config } from "./config.js";
 import { migrateRegistry, validateRegistry } from "./compatibility.js";
 import { Clock } from "./clock.js";
@@ -133,14 +140,11 @@ export class Store {
         if(locked.status!==0) {fs.closeSync(fd);throw new Error("OS_LOCK_UNAVAILABLE");}
         this.releaseLock=()=>fs.closeSync(fd);
       } else {
-      this.releaseLock = lockSync(data, {
-        lockfilePath: this.lockPath,
-        stale: 15000,
-        update: 5000,
-        realpath: true,
-        onCompromised: () => {
-          this.lockCompromised = true;
-        },
+      // A process killed outright cannot release its lock. Wait out one stale
+      // window (and take over only a lock nobody is refreshing) instead of
+      // refusing to start until someone deletes it by hand.
+      this.releaseLock = acquireVaultLock(data, this.lockPath, () => {
+        this.lockCompromised = true;
       });
       }
     } catch {
@@ -198,6 +202,43 @@ export class Store {
         );
       if(!(this.db.pragma("table_info(schema_meta)") as {name:string}[]).some(c=>c.name==="runtime_json"))
         this.db.exec("ALTER TABLE schema_meta ADD COLUMN runtime_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(runtime_json))");
+      // Revocation markers live only in SQLite: an older Markdown/JSON snapshot
+      // can restore content, never the fact that it was forgotten.
+      this.db.exec(`CREATE TABLE IF NOT EXISTS fact_usage (
+      fact_id TEXT NOT NULL,
+      event_id TEXT NOT NULL,
+      at TEXT NOT NULL,
+      applied INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY(fact_id,event_id)
+    )`);
+    this.db.exec(`CREATE TABLE IF NOT EXISTS revocations (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        target_id TEXT NOT NULL,
+        target_version INTEGER NOT NULL,
+        scope_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(scope_json)),
+        reason_code TEXT NOT NULL,
+        revoked_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS revocations_target_idx ON revocations(kind, target_id);`);
+      // Cleanup obligation for a revocation: "done" only after the original chat
+      // fragment is cleared, so a receipt can never claim an unverified erase.
+      if(!(this.db.pragma("table_info(revocations)") as {name:string}[]).some(c=>c.name==="cleanup_state"))
+        this.db.exec("ALTER TABLE revocations ADD COLUMN cleanup_state TEXT NOT NULL DEFAULT 'pending'");
+      if(!(this.db.pragma("table_info(revocations)") as {name:string}[]).some(c=>c.name==="legacy_line_hash"))
+        this.db.exec("ALTER TABLE revocations ADD COLUMN legacy_line_hash TEXT");
+      if(!(this.db.pragma("table_info(revocations)") as {name:string}[]).some(c=>c.name==="cleaned_at"))
+        this.db.exec("ALTER TABLE revocations ADD COLUMN cleaned_at TEXT");
+      if(!(this.db.pragma("table_info(inbox)") as {name:string}[]).some(c=>c.name==="seq"))
+        this.db.exec("ALTER TABLE inbox ADD COLUMN seq INTEGER NOT NULL DEFAULT 0");
+      // Understanding is recorded separately from authorization and survives restarts:
+      // an unclassified newer message holds older writes, a classified unrelated one does not.
+      if(!(this.db.pragma("table_info(inbox)") as {name:string}[]).some(c=>c.name==="classification"))
+        this.db.exec("ALTER TABLE inbox ADD COLUMN classification TEXT NOT NULL DEFAULT 'unclassified'");
+      if(!(this.db.pragma("table_info(inbox)") as {name:string}[]).some(c=>c.name==="interpretation_json"))
+        this.db.exec("ALTER TABLE inbox ADD COLUMN interpretation_json TEXT CHECK(interpretation_json IS NULL OR json_valid(interpretation_json))");
+      if(!(this.db.pragma("table_info(outbox)") as {name:string}[]).some(c=>c.name==="metadata_json"))
+        this.db.exec("ALTER TABLE outbox ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(metadata_json))");
       this.db.pragma("journal_mode=WAL");
       this.db.pragma("foreign_keys=ON");
       this.db.pragma("synchronous=FULL");
@@ -299,6 +340,19 @@ export class Store {
     this.tail = next.catch(() => {});
     return next;
   }
+  /** An unreadable truth file is a typed outage, not a raw filesystem error. */
+  #readTruth(relative: string): string {
+    try {
+      return fs.readFileSync(this.files.resolve(relative, "internal"), "utf8");
+    } catch (error: any) {
+      throw new AppError(
+        "STORAGE_UNAVAILABLE",
+        "业务文件暂不可读，本次操作没有保存",
+        503,
+        { code: error?.code ?? null },
+      );
+    }
+  }
   private unresolvedBusiness = false;
   private readBarrier() {
     if (this.db.open) this.recover();
@@ -308,11 +362,104 @@ export class Store {
   registry(): Registry {
     this.readBarrier();
     return JSON.parse(
-      fs.readFileSync(
-        this.files.resolve(this.config.storage.registry, "internal"),
-        "utf8",
-      ),
+      this.#readTruth(this.config.storage.registry),
     );
+  }
+  /** Monotonic business view number, published after files reach their target hashes. */
+  private recordRevocations(rows: RevocationRecord[]) {
+    for (const row of rows) {
+      this.db
+        .prepare(
+          "INSERT OR IGNORE INTO revocations(id,kind,target_id,target_version,scope_json,reason_code,revoked_at,cleanup_state,legacy_line_hash) VALUES(?,?,?,?,?,?,?,?,?)",
+        )
+        .run(id("rev"), row.kind, row.target_id, row.target_version, JSON.stringify(row.scope),
+          row.reason_code, row.revoked_at, row.cleanup_state ?? "pending", row.legacy_line_hash ?? null);
+    }
+    if (rows.length)
+      this.updateRuntimeMeta((meta) => ({
+        ...meta,
+        revocation_revision: Math.max(0, Number(meta.revocation_revision ?? 0)) + rows.length,
+      }));
+  }
+  revocationRevision() {
+    const value = Number(this.runtimeMeta().revocation_revision ?? 0);
+    return Number.isInteger(value) && value >= 0 ? value : 0;
+  }
+  /**
+   * Offline maintenance only: adopts a newer revocation list exported by the
+   * instance that was live after the backup. Markers are opaque (no bodies), so
+   * importing them can only suppress content, never reveal it.
+   */
+  importRevocations(payload: unknown) {
+    const data = payload as { revision?: unknown; entries?: unknown };
+    const entries = Array.isArray(data?.entries) ? data.entries : null;
+    if (!entries || !Number.isInteger(data?.revision) || (data!.revision as number) < entries.length || entries.length > 20000)
+      throw new AppError("EXPORT_INVALID", "撤销清单格式不兼容");
+    const rows = entries.map((raw) => {
+      const e = raw as Record<string, unknown>;
+      if (!e || e.kind !== "fact" || typeof e.target_id !== "string" || !e.target_id ||
+        !Number.isInteger(e.target_version) || (e.target_version as number) < 1 ||
+        !Array.isArray(e.scope) || e.scope.some((x) => typeof x !== "string") ||
+        typeof e.reason_code !== "string" || typeof e.revoked_at !== "string")
+        throw new AppError("EXPORT_INVALID", "撤销清单条目无效");
+      return {
+        kind: "fact" as const,
+        target_id: e.target_id,
+        target_version: e.target_version as number,
+        scope: e.scope as string[],
+        reason_code: e.reason_code,
+        revoked_at: e.revoked_at,
+        cleanup_state: e.cleanup_state === "done" ? ("done" as const) : ("pending" as const),
+      };
+    });
+    let imported = 0;
+    this.db.transaction(() => {
+      for (const row of rows) {
+        const result = this.db
+          .prepare(
+            "INSERT OR IGNORE INTO revocations(id,kind,target_id,target_version,scope_json,reason_code,revoked_at,cleanup_state) VALUES(?,?,?,?,?,?,?,?)",
+          )
+          .run(id("rev"), row.kind, row.target_id, row.target_version, JSON.stringify(row.scope),
+            row.reason_code, row.revoked_at, row.cleanup_state);
+        imported += result.changes ? 1 : 0;
+      }
+      this.updateRuntimeMeta((meta) => ({
+        ...meta,
+        revocation_revision: Math.max(Number(meta.revocation_revision ?? 0), data!.revision as number),
+        revocation_history: { source: "imported", revision: data!.revision, complete: true, checked_at: this.now() },
+      }));
+    })();
+    return { imported, revision: data!.revision as number, complete: true as const };
+  }
+  snapshotRevision() {
+    const value = Number(this.runtimeMeta().snapshot_revision ?? 0);
+    return Number.isInteger(value) && value >= 0 ? value : 0;
+  }
+  private publishRevision() {
+    this.updateRuntimeMeta((meta) => ({
+      ...meta,
+      snapshot_revision: Math.max(0, Number(meta.snapshot_revision ?? 0)) + 1,
+    }));
+  }
+  /**
+   * One consistent business view: registry, requested days and requested files
+   * read after the recovery barrier, tagged with the revision they belong to.
+   * Callers must not keep using it after a later commit; compare the revision.
+   */
+  readSnapshot(scope: { days?: string[]; files?: string[] } = {}) {
+    this.readBarrier();
+    const registry = this.registry();
+    const days: Record<string, Day> = {};
+    for (const date of scope.days ?? []) days[date] = this.day(date);
+    const files: Record<string, { path: string; content: string; hash: string; version: number }> = {};
+    for (const relative of scope.files ?? []) {
+      const content = this.files.read(relative);
+      const row = this.db
+        .prepare("SELECT version FROM documents WHERE path=?")
+        .get(relative) as { version: number } | undefined;
+      files[relative] = { path: relative, content, hash: hash(content), version: row?.version ?? 0 };
+    }
+    return { registry, days, files, snapshot_revision: this.snapshotRevision(), read_at: this.now() };
   }
   dayPath(date: string) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date))
@@ -342,7 +489,7 @@ export class Store {
       };
     walk("Attachment", (p) => !path.posix.basename(p).startsWith("."));
     walk(".agent/state", (p) => p.endsWith(".json"));
-    walk(".agent/context", (p) => p.endsWith(".md"));
+    walk(".agent/context", (p) => p.endsWith(".md") || p === FACTS_PATH);
     // Prompt overrides are part of the effective runtime combination; a restore
     // that dropped them would silently swap the persona back to the defaults.
     walk(".agent/prompts", (p) => p.endsWith(".md"));
@@ -371,6 +518,27 @@ export class Store {
       format: "secretary-export",
       version: 1,
       exported_at: this.now(),
+      // The marker list is part of a backup's evidence, never its content: a
+      // restore that dropped it would resurrect content the user forgot.
+      revocations: {
+        revision: this.revocationRevision(),
+        entries: (
+          this.db
+            .prepare(
+              "SELECT kind,target_id,target_version,scope_json,reason_code,revoked_at,cleanup_state,legacy_line_hash FROM revocations ORDER BY rowid",
+            )
+            .all() as any[]
+        ).map((row) => ({
+          kind: row.kind,
+          target_id: row.target_id,
+          target_version: row.target_version,
+          scope: JSON.parse(row.scope_json),
+          reason_code: row.reason_code,
+          revoked_at: row.revoked_at,
+          cleanup_state: row.cleanup_state,
+          legacy_line_hash: row.legacy_line_hash ?? undefined,
+        })),
+      },
       timezone: this.config.timezone,
       configuration:structuredClone(this.config),
       storage: {
@@ -389,7 +557,7 @@ export class Store {
       loadDay: (date: string) => Day,
       operation: string,
       rememberFact: (fact: string) => void,
-    ) => { ids: string[]; message: string; effects?: unknown },
+    ) => { ids: string[]; message: string; effects?: unknown; facts?: FactFile; revocations?: RevocationRecord[] },
     logicalGroups: {identity:string;fingerprint:string}[] = [],
   ) {
     if (this.lockCompromised || this.closed)
@@ -451,37 +619,30 @@ export class Store {
     capture(this.config.storage.registry, beforeRegistry, registry);
     for (const [date, d] of days)
       capture(this.dayPath(date), d.before, d.value);
-    if (facts.length) {
-      const relative = ".agent/context/user.md",
-        file = this.files.resolve(relative, "internal"),
+    if (result.facts) {
+      // One structured write path: new facts go to facts.json, never to user.md.
+      // The prepared patch stays a diff so old facts are not copied into events.
+      const file = this.files.resolve(FACTS_PATH, "internal"),
         before = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
-      const append =
-        (before === null ? "# 用户明确偏好\n\n" : "\n") +
-        facts
-          .map(
-            (fact) =>
-              "- " +
-              fact +
-              "（确认于 " +
-              this.now() +
-              "；输入 " +
-              inputId +
-              "）",
-          )
-          .join("\n") +
-        "\n";
-      changes.push({
-        path: relative,
-        base_hash: before === null ? null : hash(before),
-        target_hash: hash((before ?? "") + append),
-        append,
-      });
+      const baseValue: FactFile | null = before
+        ? validateFactFile(JSON.parse(before))
+        : null;
+      const next = validateFactFile(result.facts);
+      if (serialize(baseValue ?? emptyFactFile()) !== serialize(next))
+        changes.push({
+          path: FACTS_PATH,
+          base_hash: before === null ? null : hash(before),
+          target_hash: hash(serialize(next)),
+          patch: diff(baseValue, JSON.parse(serialize(next))),
+        });
     }
     const origin=this.db.prepare("SELECT metadata_json FROM inbox WHERE id=?").get(inputId) as {metadata_json:string}|undefined;
     const grant=origin?JSON.parse(origin.metadata_json).background_grant:null;
+    const revocations = result.revocations ?? [];
     const payload = {
       ...(grant?{work_binding:{work_id:grant.work_id,step_id:grant.step_id,grant_id:grant.id}}:{}),
       ...(logicalGroups.length ? {logical_groups:logicalGroups} : {}),
+      ...(revocations.length ? {revocations} : {}),
       changes,
       result: {
         status: "accepted",
@@ -508,9 +669,14 @@ export class Store {
     this.fault?.("prepared");
     this.applyChanges(changes);
     this.fault?.("files_applied");
-    this.db
-      .prepare("UPDATE events SET status='applied',completed_at=? WHERE id=?")
-      .run(this.now(), operation);
+    // The view number publishes with the applied marker, never before the files.
+    this.db.transaction(() => {
+      this.db
+        .prepare("UPDATE events SET status='applied',completed_at=? WHERE id=?")
+        .run(this.now(), operation);
+      this.publishRevision();
+      this.recordRevocations(revocations);
+    })();
     this.unresolvedBusiness = false;
     return payload.result;
   }
@@ -519,7 +685,8 @@ export class Store {
       const p = this.files.resolve(c.path, "internal");
       if (!(
         c.path.startsWith(".agent/state/") ||
-        (c.path === ".agent/context/user.md" && typeof c.append === "string")
+        (c.path === ".agent/context/user.md" && typeof c.append === "string") ||
+        (c.path === FACTS_PATH && Array.isArray(c.patch))
       ))
         throw new AppError("RECOVERY_PATH", "恢复操作越界", 500);
       const raw = fs.existsSync(p) ? fs.readFileSync(p, "utf8") : null;
@@ -550,12 +717,39 @@ export class Store {
     if (pending.length) this.unresolvedBusiness = true;
     for (const e of pending) {
       const payload = JSON.parse(e.payload_json);
-      this.applyChanges(payload.changes);
-      this.db
-        .prepare("UPDATE events SET status='applied',completed_at=? WHERE id=?")
-        .run(this.now(), e.id);
+      try {
+        this.applyChanges(payload.changes);
+      } catch (error) {
+        // A file changed by someone else is a conflict to review, not a rollback:
+        // the user's edit stays, the operation is recorded and reads stay blocked.
+        if (error instanceof AppError && error.code === "RECOVERY_CONFLICT") {
+          this.db
+            .prepare(
+              "UPDATE events SET status='conflict',error_code='RECOVERY_CONFLICT',payload_json=? WHERE id=?",
+            )
+            .run(
+              JSON.stringify({
+                ...payload,
+                recovery_conflict: { path: (error.details as any)?.path ?? null, at: this.now() },
+              }),
+              e.id,
+            );
+          continue;
+        }
+        throw error;
+      }
+      this.db.transaction(() => {
+        this.db
+          .prepare("UPDATE events SET status='applied',completed_at=? WHERE id=?")
+          .run(this.now(), e.id);
+        this.publishRevision();
+        this.recordRevocations(payload.revocations ?? []);
+      })();
     }
-    this.unresolvedBusiness = false;
+    this.unresolvedBusiness =
+      this.db
+        .prepare("SELECT 1 FROM events WHERE status IN ('prepared','conflict') AND kind='business' LIMIT 1")
+        .get() !== undefined;
   }
   document(relative: string) {
     const content = this.files.read(relative),
@@ -645,6 +839,7 @@ function restoreDataIntoStage(root: string, payload: unknown) {
           ((p.endsWith(".md") &&
             !p.split("/").some((x: string) => x.startsWith("."))) ||
             /^\.agent\/context\/[^/]+\.md$/.test(p) ||
+            p === FACTS_PATH ||
             /^\.agent\/prompts\/[^/]+\.md$/.test(p) ||
             /^\.agent\/state\/(?:[^/]+\/)*[^/]+\.json$/.test(p)))
     )
@@ -718,6 +913,9 @@ export function restoreData(root:string,payload:unknown) {
     const result=restoreDataIntoStage(stage,payload);
     const data=payload as any,reg=JSON.parse(fs.readFileSync(path.join(stage,data.storage.registry),"utf8"));
     validateRegistry(migrateRegistry(reg,new Date().toISOString()));
+    // Long-lived facts are validated before the backup replaces a live vault.
+    const factsFile=path.join(stage,FACTS_PATH);
+    if(fs.existsSync(factsFile))validateFactFile(JSON.parse(fs.readFileSync(factsFile,"utf8")));
     const dir=path.join(stage,".agent/data"),restoredConfig=loadConfig(stage),database=path.join(stage,restoredConfig.storage.database);
     fs.mkdirSync(path.dirname(database),{recursive:true,mode:0o700});
     const db=new Database(database);
@@ -725,9 +923,25 @@ export function restoreData(root:string,payload:unknown) {
       db.exec(fs.readFileSync(resource("schema.sql"),"utf8"));
       db.pragma("journal_mode=WAL");db.pragma("synchronous=FULL");
       const now=new Date().toISOString();
+      // Import the backup's marker list before the runtime becomes usable, so a
+      // restored older body can never outrank a revocation the backup knew about.
+      const carried=(payload as any).revocations, entries=Array.isArray(carried?.entries)?carried.entries:[];
+      if(carried!==undefined && (!carried || typeof carried!=="object" || !Number.isInteger(carried.revision) || carried.revision<entries.length ||
+        entries.length>20000 || entries.some((e:any)=>!e || e.kind!=="fact" || typeof e.target_id!=="string" || !e.target_id ||
+          !Number.isInteger(e.target_version) || e.target_version<1 || !Array.isArray(e.scope) || e.scope.some((x:any)=>typeof x!=="string") ||
+          typeof e.reason_code!=="string" || typeof e.revoked_at!=="string")))
+        throw new AppError("EXPORT_INVALID","备份的撤销清单格式不兼容");
+      const insertMarker=db.prepare("INSERT OR IGNORE INTO revocations(id,kind,target_id,target_version,scope_json,reason_code,revoked_at,cleanup_state) VALUES(?,?,?,?,?,?,?,?)");
+      for(const e of entries as any[])
+        insertMarker.run(id("rev"),e.kind,e.target_id,e.target_version,JSON.stringify(e.scope),e.reason_code,e.revoked_at,
+          e.cleanup_state==="done"?"done":"pending");
+      const carriedRevision=Number.isInteger(carried?.revision)?carried.revision:entries.length;
       db.prepare("UPDATE schema_meta SET runtime_json=? WHERE version=1").run(JSON.stringify({generation:id("restore"),restore_boundary:now,
         recovery_guard:{active:true,reason:"BACKUP_RESTORED",created_at:now},budget_guard:true,
-        budget_guard_day:DateTime.fromISO(now,{zone:data.timezone}).toISODate()}));
+        budget_guard_day:DateTime.fromISO(now,{zone:data.timezone}).toISODate(),
+        revocation_revision:carriedRevision,
+        // Deletions after this backup cannot be known from the backup itself.
+        revocation_history:{source:carried===undefined?"absent":"backup",revision:carriedRevision,complete:false,checked_at:now}}));
       db.pragma("wal_checkpoint(TRUNCATE)");
     }finally{db.close();}
     atomicWrite(path.join(dir,"recovery-since"),new Date().toISOString());
@@ -768,5 +982,90 @@ export function restoreData(root:string,payload:unknown) {
     if(path.dirname(verified)!==parent || !path.basename(verified).startsWith(".secretary-restore-"))throw new Error("UNSAFE_RESTORE_CLEANUP");
     fs.rmSync(verified,{recursive:true,force:true});
     throw error;
+  }
+}
+
+function sleepSync(ms: number) {
+  const buffer = new Int32Array(new SharedArrayBuffer(4));
+  Atomics.wait(buffer, 0, 0, ms);
+}
+
+function acquireVaultLock(data: string, lockPath: string, onCompromised: () => void): () => void {
+  const stale = 8000;
+  const ownerPath = lockPath + ".owner.json";
+  const deadline = Date.now() + 30000;
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  for (;;) {
+    try {
+      const release = lockSync(data, {
+        lockfilePath: lockPath,
+        stale,
+        update: 2000,
+        realpath: true,
+        onCompromised,
+      });
+      try {
+        fs.writeFileSync(
+          ownerPath,
+          JSON.stringify({ pid: process.pid, at: new Date().toISOString() }),
+          { mode: 0o600 },
+        );
+      } catch {
+        /* the owner record is an optimisation, not a requirement */
+      }
+      return () => {
+        try {
+          fs.rmSync(ownerPath, { force: true });
+        } catch {
+          /* already gone */
+        }
+        release();
+      };
+    } catch (error) {
+      let owner: { pid?: number } | null = null;
+      try {
+        owner = JSON.parse(fs.readFileSync(ownerPath, "utf8"));
+      } catch {
+        owner = null;
+      }
+      // This process already owns the vault: a second Core must fail at once,
+      // never wait for a takeover of its own lock.
+      if (owner?.pid === process.pid) throw error;
+      // The recorded writer is gone: its lock may be taken over at once.
+      const ownerDead = !!owner?.pid && !alive(owner.pid);
+      if (ownerDead || !owner) {
+        const age = (() => {
+          try {
+            return Date.now() - fs.statSync(lockPath).mtimeMs;
+          } catch {
+            return Number.POSITIVE_INFINITY;
+          }
+        })();
+        if (ownerDead || age > stale) {
+          try {
+            fs.rmSync(lockPath, { recursive: true, force: true });
+          } catch {
+            /* someone else removed it */
+          }
+          try {
+            fs.rmSync(ownerPath, { force: true });
+          } catch {
+            /* nothing to clean */
+          }
+          continue;
+        }
+      }
+      // A live writer keeps refreshing its lock: refuse promptly.
+      if (owner?.pid && owner.pid !== process.pid && alive(owner.pid)) throw error;
+      if (Date.now() > deadline) throw error;
+      sleepSync(500);
+    }
   }
 }

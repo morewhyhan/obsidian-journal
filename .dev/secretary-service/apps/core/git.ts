@@ -34,7 +34,7 @@ export const backupPath = (p: string) => {
     (!p.startsWith(".agent/") && p.endsWith(".md")) ||
     ["MOC.md", "README.md"].includes(p) ||
     /^\.agent\/(state|context|prompts)\//.test(p) ||
-    [".agent/config.json", ".agent/Research/README.md", ".agent/Research/PRD.md", ".agent/Research/DDD.md"].includes(p)
+    [".agent/config.json", ".agent/Research/README.md", ".agent/Research/ARCHITECTURE.md", ".agent/Research/DECISIONS.md"].includes(p)
   );
 };
 export async function verifyGitHubPrivate(

@@ -82,7 +82,7 @@ export function validateRegistry(r:Registry) {
   for(const f of r.followups??[]) {
     if(!["open","waiting_user","waiting_condition","paused","resolved"].includes(f.status)) throw new AppError("STATE_INVALID","责任状态无效",503);
     if(f.work) {
-      shape(f.work,["key","summary","owner","next_action","condition","source","refs","step_id","done_when","wake_on","delegation","resolution","paused_from","prior_steps"]);
+      shape(f.work,["key","summary","owner","next_action","condition","source","refs","step_id","done_when","wake_on","wake_versions","last_wake","delegation","resolution","paused_from","prior_steps"]);
       source(f.work.source);
       if(!["assistant","user","condition"].includes(f.work.owner) || (f.work.prior_steps?.length??0)>8 || (f.work.wake_on?.length??0)>8)invalid();
       if(f.work.delegation) {

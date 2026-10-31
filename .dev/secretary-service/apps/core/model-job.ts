@@ -2,7 +2,7 @@ import type { Store } from "./store.js";
 import { AppError } from "../../packages/contracts/types.js";
 import { id } from "./files.js";
 import { requireRuntimeCombination } from "./compatibility-runtime.js";
-export function beginModelJob(s:Store,inputId:string,kind:"front"|"background"|"compose"|"self_test") {
+export function beginModelJob(s:Store,inputId:string,kind:"front"|"background"|"compose"|"classify"|"self_test") {
   requireRuntimeCombination(s);
   const now=s.now(),current=s.runtimeMeta().model_job;
   if(current && current.generation===s.generation && current.deadline_at>now)throw new AppError("MODEL_JOB_BUSY","模型槽正在处理另一作业",429);
@@ -10,7 +10,7 @@ export function beginModelJob(s:Store,inputId:string,kind:"front"|"background"|"
     const row=s.db.prepare("SELECT channel,status FROM inbox WHERE id=?").get(inputId) as any;
     if(row?.status!=="processing" || (kind==="background")!==(row.channel==="coordinator"))throw new AppError("MODEL_JOB_INVALID","模型作业不属于有效入件",403);
   }
-  const ms=kind==="front"?120000:kind==="background"?60000:kind==="compose"?10000:30000;
+  const ms=kind==="front"?120000:kind==="background"?60000:kind==="compose"?10000:kind==="classify"?60000:30000;
   const job={id:id("modeljob"),input_id:inputId,kind,generation:s.generation,deadline_at:new Date(Date.parse(now)+ms).toISOString(),
     mono_deadline:performance.now()+ms,requests:0,compatibility_fingerprint:s.compatibility?.fingerprint??null};
   s.updateRuntimeMeta(m=>({...m,model_job:job}));

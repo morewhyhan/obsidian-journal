@@ -1,5 +1,5 @@
 import { DateTime } from "luxon";
-import type { Registry } from "../../packages/contracts/types.js";
+import type { Automation, Registry } from "../../packages/contracts/types.js";
 import { localDate } from "../../packages/calendar/index.js";
 import { hash, id, canonicalJson } from "./files.js";
 import { Lease } from "./deadline.js";
@@ -53,6 +53,13 @@ export class Scheduler {
   readonly tickLease = new Lease("tick", 120_000);
   lastTick: string | null = null;
   lastError: string | null = null;
+  /** Why the last tick sent nothing (or what it did), for operators. */
+  lastDispatch: {
+    at: string;
+    sent: boolean;
+    reason: string;
+    paused_by_newer_input: number;
+  } | null = null;
   private idle: Promise<void> = Promise.resolve();
   private releaseIdle?: () => void;
   private stopped = false;
@@ -280,6 +287,17 @@ export class Scheduler {
         (o.checkin_status === "skip" || (this.core.agent && !o.checkin_status))
       )
         continue;
+      // A status check is an idle nudge, not a clock appointment: any contact
+      // (our own proactive message or the user's reply) restarts the interval,
+      // so a morning report 40 minutes ago must not be followed by "what are
+      // you doing" yet.
+      if (
+        o.kind === "automation" &&
+        "kind" in a &&
+        a.kind === "status_check" &&
+        !this.idleNudgeDue(a, now)
+      )
+        continue;
       const check =
         o.kind === "automation" && "kind" in a && a.kind === "status_check"
           ? this.core.assistant.knownBusy()
@@ -387,6 +405,21 @@ export class Scheduler {
         a.id.localeCompare(b.id),
     );
   }
+  /** True once the configured silence interval has elapsed since any contact. */
+  private idleNudgeDue(a: Automation, now: string) {
+    const every = (a.schedule?.every_hours ?? 2) * 3600000;
+    return Date.parse(now) - this.lastContactAt() >= every;
+  }
+
+  private lastContactAt() {
+    const row = this.core.store.db
+      .prepare(
+        "SELECT MAX(t) t FROM (SELECT MAX(received_at) t FROM inbox WHERE status='processed' UNION ALL SELECT MAX(created_at) t FROM outbox WHERE status='sent')",
+      )
+      .get() as any;
+    return row?.t ? Date.parse(row.t) : Date.parse(this.core.store.now()) - 86400000;
+  }
+
   private permitted(targetId: string, candidate?: Candidate) {
     const store = this.core.store;
     return (
@@ -544,6 +577,60 @@ export class Scheduler {
   close() {
     this.stopped = true;
   }
+  /** One bounded wording call; a missing or slow composer falls back to a status line. */
+  private async progressWording(inputId: string, text: string, threshold: number) {
+    const fallback = "正在办理你刚交代的事，结果出来就告诉你。";
+    if (!this.core.agent?.compose) return fallback;
+    try {
+      const result = await Promise.race([
+        this.core.agent.compose({
+          purpose: "progress",
+          input_id: inputId,
+          user_message: text.slice(0, 200),
+          elapsed_seconds: threshold,
+          // What actually happened so far, so the note can name real steps
+          // instead of a generic "still working".
+          steps: this.progressSteps(inputId),
+          instruction:
+            "用户刚交代的事还在办理。用一句自然的话说明你正在做什么、结果出来会告诉他；不承诺具体时刻，不虚构进度，不追加问题。",
+        }),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000)),
+      ]);
+      const value = typeof (result as any)?.text === "string" ? (result as any).text.trim() : "";
+      return value && value.length <= 300 ? value : fallback;
+    } catch {
+      return fallback;
+    }
+  }
+  /** Bounded summary of this turn's real tool results (no note bodies). */
+  private progressSteps(inputId: string) {
+    const rows = this.core.store.db
+      .prepare("SELECT payload_json FROM events WHERE input_id=? AND kind='business_tool' ORDER BY rowid DESC LIMIT 3")
+      .all(inputId) as { payload_json: string }[];
+    const counts: Record<string, number> = {};
+    const reasons: string[] = [];
+    for (const row of rows) {
+      const results = JSON.parse(row.payload_json ?? "{}")?.result?.results ?? [];
+      for (const result of results as any[]) {
+        const status = String(result?.status ?? "unknown");
+        counts[status] = (counts[status] ?? 0) + 1;
+        if (result?.error?.code && reasons.length < 3) reasons.push(String(result.error.code));
+      }
+    }
+    // File writes made by this turn are also real steps, not guesses.
+    const metadata = this.core.store.db
+      .prepare("SELECT metadata_json FROM inbox WHERE id=?")
+      .get(inputId) as { metadata_json: string } | undefined;
+    const workspace = JSON.parse(metadata?.metadata_json ?? "{}").workspace_operations ?? [];
+    const files = Array.isArray(workspace) ? workspace.slice(-3).map((item: any) => String(item?.operation ?? "")) : [];
+    return {
+      applied: counts.applied ?? 0,
+      pending: counts.pending_decision ?? 0,
+      rejected: counts.rejected ?? 0,
+      files_written: files,
+      reasons,
+    };
+  }
   async tick(receiptsOnly = false) {
     if (this.stopped) return;
     // A tick lease expires on its own: a hung dispatch cannot block the loop.
@@ -562,8 +649,45 @@ export class Scheduler {
         this.languageTask=this.prepareLanguage().catch(()=>{this.lastError="MESSAGE_GENERATION_FAILED";})
           .finally(()=>{this.languageTask=undefined;});
       }
+      // Understanding runs beside the turn loop; it may call the model, so it stays
+      // outside the store lock. A missing classifier leaves the gate fail-closed.
+      if (!receiptsOnly) await this.core.classifyPending().catch(() => null);
+      // Progress wording is generated outside the lock too: holding the writer turn
+      // while waiting for the model would stall every other commit.
+      const progressTexts = new Map<string, string>();
+      if (!receiptsOnly && store.state.acceptsBackground()) {
+        const threshold = store.config.notifications.progress_after_seconds ?? 8;
+        const waiting = store.db
+          .prepare(
+            "SELECT id,body,metadata_json FROM inbox WHERE status='processing' AND json_extract(metadata_json,'$.progress_queued') IS NULL AND json_extract(metadata_json,'$.turn_started_at') IS NOT NULL",
+          )
+          .all() as { id: string; body: string | null; metadata_json: string }[];
+        for (const row of waiting) {
+          const started = Date.parse(JSON.parse(row.metadata_json).turn_started_at);
+          if (!Number.isFinite(started) || Date.parse(store.now()) - started < threshold * 1000) continue;
+          progressTexts.set(row.id, await this.progressWording(row.id, row.body ?? "", threshold));
+        }
+      }
       const dispatch = await store.exclusive(() => {
         this.core.recoverPending();
+        // Slow foreground turns get one bounded progress note. The clock comes
+        // from the store, so the check is deterministic under the test clock.
+        if (!receiptsOnly) {
+          const threshold = store.config.notifications.progress_after_seconds ?? 8;
+          const slow = store.db
+            .prepare(
+              "SELECT id,channel,actor_ref,metadata_json FROM inbox WHERE status='processing' AND json_extract(metadata_json,'$.progress_queued') IS NULL AND json_extract(metadata_json,'$.turn_started_at') IS NOT NULL",
+            )
+            .all() as { id: string; channel: string; actor_ref: string; metadata_json: string }[];
+          for (const row of slow) {
+            const started = Date.parse(JSON.parse(row.metadata_json).turn_started_at);
+            if (!Number.isFinite(started) || Date.parse(store.now()) - started < threshold * 1000) continue;
+            this.core.queueProgress(
+              { id: row.id, channel: row.channel, actor_ref: row.actor_ref, external_id: row.id, text: "", occurred_at: store.now() },
+              progressTexts.get(row.id) ?? "正在办理你刚交代的事，结果出来就告诉你。",
+            );
+          }
+        }
         const claim = store.db.transaction(() => {
           store.db
             .prepare(
@@ -672,6 +796,9 @@ export class Scheduler {
                 (kind === "follow_up"
                   ? "suggestion"
                   : (candidate.contactClass ?? "suggestion"))]: 1,
+                // Delivery re-checks the revocation revision: a forgotten fact
+                // must not reach the user through an already queued reminder.
+                revocation: store.revocationRevision(),
                 ...Object.fromEntries(
                   (candidate.members ?? [candidate])
                     .filter((c) => c.questionId)
@@ -731,15 +858,31 @@ export class Scheduler {
           if (!this.channel.health().connected) return null;
           const pending = store.db
             .prepare(
-              "SELECT * FROM outbox WHERE status IN ('pending','failed') AND attempts<? AND scheduled_at<=? AND expires_at>? ORDER BY counts_as_proactive,scheduled_at,rowid",
+              "SELECT * FROM outbox WHERE status IN ('pending','failed') AND attempts<? AND scheduled_at<=? AND expires_at>? ORDER BY counts_as_proactive,scheduled_at,json_extract(metadata_json,'$.reply_group'),json_extract(metadata_json,'$.sequence'),rowid",
             )
             .all(
               store.config.notifications.delivery_retry_cap + 1,
               store.now(),
               store.now(),
             ) as any[];
+          // A still-ununderstood user message pauses only the candidates queued
+          // before it ("旧候选"); receipts, progress notes and answers to that very
+          // message keep flowing.
+          const newestUnunderstood = (
+            store.db
+              .prepare(
+                "SELECT max(received_at) AS at FROM inbox WHERE channel<>'coordinator' AND status IN ('pending','processing')",
+              )
+              .get() as { at: string | null }
+          ).at;
+          const pausedBefore = newestUnunderstood ? Date.parse(newestUnunderstood) : null;
+          let pausedByInput = 0;
           for (const row of pending) {
             if (receiptsOnly && row.counts_as_proactive) continue;
+            if (row.counts_as_proactive && pausedBefore !== null && Date.parse(row.created_at) < pausedBefore) {
+              pausedByInput++;
+              continue;
+            }
             if (this.core.agent?.executionMode === "tools-v2" && row.message_kind === "receipt" && JSON.parse(row.source_versions_json).language !== "llm") {
               store.db.prepare("UPDATE outbox SET status='cancelled',finished_at=?,updated_at=? WHERE id=?").run(store.now(),store.now(),row.id);
               continue;
@@ -755,6 +898,11 @@ export class Scheduler {
               if (previous?.status !== "sent") continue;
             }
             if (row.counts_as_proactive) {
+              const queuedRevision = JSON.parse(row.source_versions_json).revocation;
+              if (typeof queuedRevision === "number" && queuedRevision !== store.revocationRevision()) {
+                store.db.prepare("UPDATE outbox SET status='cancelled',finished_at=?,updated_at=? WHERE id=?").run(store.now(),store.now(),row.id);
+                continue;
+              }
               const candidate = available.find(
                 (c) =>
                   row.dedupe_key === c.id + ":initial" ||
@@ -845,6 +993,14 @@ export class Scheduler {
               );
             return { row: { ...row, attempts: row.attempts + 1 }, attempts };
           }
+          // Nothing was claimable this tick: say why, so an operator can tell a
+          // deliberate pause from a stalled queue without reading the database.
+          this.lastDispatch = {
+            at: store.now(),
+            sent: false,
+            reason: pausedByInput ? "paused_by_newer_input" : pending.length ? "no_claimable_row" : "queue_empty",
+            paused_by_newer_input: pausedByInput,
+          };
           return null;
         })();
         if (!claim) return null;
@@ -885,6 +1041,12 @@ export class Scheduler {
         }),
       ]);
       if (timeout) clearTimeout(timeout);
+      this.lastDispatch = {
+        at: store.now(),
+        sent: result.status === "sent",
+        reason: result.status === "sent" ? "sent" : "delivery_" + result.status,
+        paused_by_newer_input: 0,
+      };
       await store.exclusive(() => {
         dispatch.attempts.at(-1).result = result.status;
         const row = dispatch.row;
@@ -917,6 +1079,38 @@ export class Scheduler {
           result.status,
           row.attempts,
         );
+        // Only what the channel accepted counts as "the user saw this set".
+        if (result.status === "sent" && row.message_kind === "receipt") {
+          const metadata = JSON.parse(row.metadata_json ?? "{}");
+          const group =
+            metadata.reply_group ??
+            String(row.dedupe_key).replace(/:reply(:\d+)?$/, "");
+          const proposals = (JSON.parse(row.target_refs_json) as any[]).filter(
+            (ref) => ref?.kind === "proposal",
+          );
+          const inbox = store.db
+            .prepare("SELECT metadata_json FROM inbox WHERE id=?")
+            .get(group) as { metadata_json: string } | undefined;
+          if (inbox && proposals.length) {
+            const current = JSON.parse(inbox.metadata_json);
+            const set: any[] = Array.isArray(current.delivered_display_set)
+              ? current.delivered_display_set
+              : [];
+            for (const proposal of proposals)
+              if (!set.some((item) => item.id === proposal.id))
+                set.push({
+                  id: proposal.id,
+                  outbox_id: row.id,
+                  sequence: Number(metadata.sequence ?? 1),
+                  sent_at: store.now(),
+                });
+            store.db
+              .prepare(
+                "UPDATE inbox SET metadata_json=json_set(metadata_json,'$.delivered_display_set',json(?)) WHERE id=?",
+              )
+              .run(JSON.stringify(set), group);
+          }
+        }
       });
       this.lastError = null;
       return result.status === "sent";

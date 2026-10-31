@@ -76,7 +76,10 @@ export function validatePlanningSettings(p: PlanningSettings) {
       !DateTime.fromISO(d.date).isValid
     )
       fail("计划日期无效");
-    windows(d.windows);
+    if (d.windows !== undefined) windows(d.windows);
+    if (d.buffer_minutes !== undefined && d.buffer_minutes !== null &&
+      (!Number.isInteger(d.buffer_minutes) || d.buffer_minutes < 0 || d.buffer_minutes > 120))
+      fail("单日保留缓冲须为0到120分钟");
   }
 }
 export function planningSettings(
@@ -240,6 +243,11 @@ export function availabilityFor(
     })),
   );
 }
+/** Trailing reserve for one date: an explicit single-day value replaces the default. */
+export function bufferMinutesFor(p: PlanningSettings, date: string) {
+  const override = p.day_overrides.find((x) => x.date === date)?.buffer_minutes;
+  return override === undefined || override === null ? p.buffer_minutes : override;
+}
 function freeSpans(
   date: string,
   r: Registry,
@@ -267,7 +275,7 @@ function freeSpans(
   ]);
   const result: Span[] = [];
   for (const range of availabilityFor(date, p, zone)) {
-    const end = range.end - (buffer ? p.buffer_minutes * minute : 0);
+    const end = range.end - (buffer ? bufferMinutesFor(p, date) * minute : 0);
     let cursor = Math.max(range.start, Date.parse(now));
     for (const block of occupied) {
       if (block.end <= cursor || block.start >= end) continue;
@@ -286,6 +294,8 @@ function slotFor(
   p: PlanningSettings,
   zone: string,
   exclude: string[] = [],
+  // Reflow repairs an explicitly reported overrun; the reserve rule for those
+  // paths is tracked as an open S3 item until the decision flow exists.
   buffer = false,
   dateOnly?: string,
 ) {
@@ -336,6 +346,11 @@ export function reflow(
   settings: PlanningSettings,
   zone: string,
   operation: string,
+  /**
+   * Automatic rescheduling (coordinator/background) must not eat the day's
+   * reserve; an explicit user change may, because the person asked for it.
+   */
+  respectReserve = false,
 ) {
   const copy = structuredClone(r);
   const root = copy.plans.find((x) => x.id === rootId)!;
@@ -394,14 +409,27 @@ export function reflow(
     [...affected],
     false,
   ).some((x) => x.start <= Date.parse(start) && x.end >= Date.parse(end));
+  // An automatic repair keeps the day's reserve: extending the root into it is
+  // the same mistake as placing a dependent there.
+  const rootDate = DateTime.fromISO(start, { zone }).toISODate()!;
+  const reserveBoundary = Math.max(
+    ...availabilityFor(rootDate, settings, zone).map(
+      (x) => x.end - (respectReserve ? bufferMinutesFor(settings, rootDate) * minute : 0),
+    ),
+    -Infinity,
+  );
+  const eatsReserve = respectReserve && Date.parse(end) > reserveBoundary;
   if (
     !fitsAvailability ||
     protectedHit ||
+    eatsReserve ||
     (rootTask?.due_at && end > rootTask.due_at && !root.overdue_recovery)
   )
     throw new AppError(
       "PLANNING_CONFLICT",
-      "剩余工作放不进已确认时间，不能挤占休息或改变截止日",
+      eatsReserve
+        ? "剩余工作会挤占当天保留时间，需要你决定是否放宽保留"
+        : "剩余工作放不进已确认时间，不能挤占休息或改变截止日",
       409,
     );
   const pending = copy.plans
@@ -460,6 +488,7 @@ export function reflow(
         .filter((x) => x.kind !== "fixed")
         .map((x) => x.id)
         .concat(p.id),
+      respectReserve,
     );
     if (!slot)
       throw new AppError(
@@ -550,6 +579,7 @@ export function recoverySlot(
     settings,
     zone,
     [plan.id],
+    true,
   );
 }
 export function boundaryAllows(

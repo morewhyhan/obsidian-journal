@@ -205,3 +205,49 @@ class ToolRecovery(unittest.IsolatedAsyncioTestCase):
         bridge.core_post.assert_not_awaited()
 
 if __name__ == "__main__": unittest.main()
+
+
+class NativeToolSet(unittest.TestCase):
+    """A native turn answers in prose, so the legacy proposal schema is dropped."""
+
+    def bridge(self):
+        return bridge_module.Bridge(
+            None, "x" * 40, "http://core:3180", "1000000001", "1000000002"
+        )
+
+    def test_native_turns_do_not_carry_the_duplicated_proposal_schema(self):
+        bridge = self.bridge()
+        native = [tool["name"] for tool in bridge.tools_for(True)]
+        legacy = [tool["name"] for tool in bridge.tools_for(False)]
+        self.assertNotIn("submit_proposal", native)
+        self.assertIn("secretary", native)
+        self.assertIn("workspace", native)
+        self.assertIn("get_context", native)
+        self.assertIn("submit_proposal", legacy)
+        # The legacy protocol probe answers through submit_proposal.
+        self.assertEqual(len(bridge.tools_for(False, True)), len(legacy))
+        # The catalog hash still covers every shipped tool.
+        self.assertEqual(
+            len(bridge.tools), len(legacy)
+        )
+        self.assertGreater(len(legacy), len(native))
+
+class RepeatedReadLoop(unittest.IsolatedAsyncioTestCase):
+    async def test_an_identical_read_is_answered_from_the_turn_memo(self):
+        bridge = type("FakeBridge", (), {})()
+        bridge.tools = json.loads(module_path.with_name("tools.json").read_text("utf-8-sig"))
+        bridge.core_post = AsyncMock(return_value={"items": [{"id": "task-1"}]})
+        turn = bridge_module.Turn(
+            bridge,
+            {"input": {"id": "loop-probe"}, "context": {}, "limits": {"max_tools": 6}},
+        )
+        first = json.loads(await turn.call("secretary", {"operation": "state"}))
+        second = json.loads(await turn.call("secretary", {"operation": "state"}))
+        self.assertEqual(first, second["result"])
+        self.assertTrue(second["repeat"])
+        self.assertIn("不要重复同一调用", second["notice"])
+        # One physical call only: the repeat is served from the turn memo.
+        self.assertEqual(bridge.core_post.await_count, 1)
+        # A different read still reaches Core.
+        await turn.call("secretary", {"operation": "status"})
+        self.assertEqual(bridge.core_post.await_count, 2)

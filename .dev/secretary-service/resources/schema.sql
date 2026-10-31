@@ -100,3 +100,18 @@ CREATE INDEX outbox_due_idx ON outbox(status, scheduled_at);
 CREATE INDEX outbox_budget_idx ON outbox(business_date, counts_as_proactive, status);
 
 COMMIT;
+
+-- Revocation markers live only in SQLite: an older Markdown/JSON snapshot can
+-- restore content, never the fact that it was forgotten.
+CREATE TABLE IF NOT EXISTS revocations (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  target_version INTEGER NOT NULL,
+  scope_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(scope_json)),
+  reason_code TEXT NOT NULL,
+  revoked_at TEXT NOT NULL,
+  cleanup_state TEXT NOT NULL DEFAULT 'pending',
+  cleaned_at TEXT
+);
+CREATE INDEX IF NOT EXISTS revocations_target_idx ON revocations(kind, target_id);

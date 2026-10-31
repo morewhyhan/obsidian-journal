@@ -58,11 +58,16 @@ export async function runDelegatedWork(core:Core,allowForeground=false) {
           const changed=reconcileWork(s,reg,job,f.work!.delegation!.source);
           const current=reg.followups!.find(x=>x.id===f.id);
           if(current?.analysis?.fingerprint===cause)current.analysis.status="done";
+          // The preparation actually ran, so an older planning gap no longer blocks it.
+          core.clearPlanningGap();
           return {ids:changed,message:"准备效果已核对，未满足完成条件的责任保留"};
         });
         s.db.prepare("UPDATE inbox SET status='processed',body=NULL,processed_at=? WHERE id=?").run(s.now(),job);
       });
     }catch(error) {
+      // A background attempt that fails because the day cannot fit the work is a
+      // gap the user must decide about, not just a failed job in a log.
+      if (error instanceof AppError && error.code === "PLANNING_CONFLICT") core.recordPlanningGap(error.message);
       await s.exclusive(()=>{
         s.commit(job+":failure","coordinator",job,reg=>{
           const current=reg.followups!.find(x=>x.id===f.id);

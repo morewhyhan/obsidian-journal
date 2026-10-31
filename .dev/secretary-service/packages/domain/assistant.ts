@@ -628,7 +628,8 @@ export function automationAction(
       to_diary: raw.to_diary === true,
       strict: raw.strict === true,
       quiet_exception:
-        kind === "one_shot" && Date.parse(due!) - Date.parse(c.now) <= 3600000,
+        raw.quiet_exception === true ||
+        (kind === "one_shot" && Date.parse(due!) - Date.parse(c.now) <= 3600000),
       paused_until: null,
       skip_dates: previous?.skip_dates ?? [],
       approval: c.source,
@@ -639,12 +640,36 @@ export function automationAction(
       c.now,
     );
     item.quiet_exception =
-      item.quiet_exception && inQuiet(c.now, c.zone, quiet);
-    if (due && inQuiet(due, c.zone, quiet) && !item.quiet_exception)
-      fail(
-        "提醒落在静默时段，尚未创建；建议改到静默结束后，或先调整明确的静默规则",
-      );
+      raw.quiet_exception === true ||
+      (item.quiet_exception && inQuiet(c.now, c.zone, quiet));
+    // A repeating schedule that starts inside the quiet window would be created
+    // and then silently never delivered: refuse it instead, unless the caller
+    // carries the user's explicit consent for that time.
+    const scheduledStart =
+      schedule && localTime(schedule.local_start)
+        ? DateTime.fromISO(date(c.now.toString().slice(0, 10)) + "T" + schedule.local_start, {
+            zone: timezone,
+          })
+        : null;
+    // Refuse only a subscription that can never deliver: every one of its slots
+    // falls inside the quiet hours. A wide window (06:00-22:00, or an all-day
+    // hourly check) still has usable slots, and a repeating reminder is not
+    // judged by its start minute alone.
     const focus = currentFocus(r, c.loadDay);
+    const deliverable =
+      kind === "one_shot"
+        ? !!due && !inQuiet(due, c.zone, quiet)
+        : (() => {
+            const localToday = DateTime.fromISO(date(c.now.toString().slice(0, 10)), {
+              zone: timezone,
+            }).toISODate();
+            const slots = localToday ? automationSlots(item, localToday) : [];
+            return slots.length === 0 || slots.some((x) => !inQuiet(x, c.zone, quiet));
+          })();
+    if (!item.quiet_exception && !deliverable)
+      fail(
+        "提醒落在静默时段，尚未创建；建议改到静默结束后，带上用户明确同意的 quiet_exception，或先调整明确的静默规则",
+      );
     checkSubscriptionCapacity(
       [...all.filter((x) => x.id !== item.id), item],
       focus && ["active", "paused", "needs_resume"].includes(focus.status)

@@ -59,6 +59,16 @@ export type AppOptions = {
   timers?: boolean;
   env?: NodeJS.ProcessEnv;
 };
+/**
+ * Retry spacing for the model self-test. With a queued message the long circuit
+ * breaker would leave the assistant mute for ten minutes after a restart.
+ */
+export function agentRetryDelay(failures: number, hasPendingInput: boolean) {
+  const base =
+    failures >= 3 ? 600000 : failures === 2 ? 30000 : failures === 1 ? 5000 : 0;
+  return hasPendingInput && failures >= 3 ? 30000 : base;
+}
+
 export async function createApp(options: AppOptions) {
   validateProductionSettings({
     passwordHash: options.passwordHash,
@@ -118,7 +128,14 @@ export async function createApp(options: AppOptions) {
     lastModelCheck = 0;
   let modelRetry: NodeJS.Timeout | undefined;
   const checkAgent = () => {
-    const retryCooldown=agentStatus.consecutive_failures>=3?600000:agentStatus.consecutive_failures===2?30000:agentStatus.consecutive_failures===1?5000:0;
+    // A queued message must not wait ten minutes just because the bridge was not
+    // listening yet during startup: retry soon while someone is waiting.
+    const pendingInputs = () =>
+      (store.db.prepare("SELECT count(*) n FROM inbox WHERE status='pending'").get() as any).n > 0;
+    const retryCooldown = agentRetryDelay(
+      agentStatus.consecutive_failures,
+      pendingInputs(),
+    );
     if (
       !(configuredAgent instanceof AstrBotClient) ||
       core.working ||
@@ -140,16 +157,34 @@ export async function createApp(options: AppOptions) {
         core.agent = configuredAgent;
         void core.processPending();
       })
-      .catch(() => {
+      .catch((error: any) => {
         agentStatus.consecutive_failures++;
         agentStatus.self_test = agentStatus.consecutive_failures>=3?"circuit_open":"failed";
         agentStatus.error = "MODEL_SELF_TEST_FAILED";
         core.agent = undefined;
+        // Without a log line, a failed self-test looks exactly like "the user
+        // got no answer": messages sit pending and nothing is printed.
+        console.error(
+          JSON.stringify({
+            event: "agent_self_test_failed",
+            code: typeof error?.code === "string" ? error.code : null,
+            transport:
+              typeof error?.cause?.code === "string" ? error.cause.code : null,
+            error_name: typeof error?.name === "string" ? error.name : null,
+            failures: agentStatus.consecutive_failures,
+            will_retry: agentStatus.consecutive_failures < 10,
+          }),
+        );
       })
       .finally(() => {
         modelCheck = undefined;
         if (["failed","circuit_open"].includes(agentStatus.self_test) && !closing) {
-          const delay=agentStatus.consecutive_failures>=3?600000:agentStatus.consecutive_failures===2?30000:5000;
+          // The scheduled retry must follow the same rule as the entry cooldown:
+          // a queued message may not wait the ten-minute circuit timeout.
+          const delay = agentRetryDelay(
+            agentStatus.consecutive_failures,
+            pendingInputs(),
+          );
           agentStatus.retry_at=new Date(store.clock().getTime()+delay).toISOString();
           if(modelRetry)clearTimeout(modelRetry);
           modelRetry = setTimeout(checkAgent, delay);
@@ -253,6 +288,10 @@ export async function createApp(options: AppOptions) {
       return;
     }
     if (!url.startsWith("/api/v1/")) return;
+    // No web credentials means no web surface at all: fail closed rather than
+    // accepting an empty password or an unsigned session cookie.
+    if (!options.sessionKey || !options.passwordHash)
+      throw new AppError("WEB_DISABLED", "此部署仅开放 QQ 接入，Web 界面未启用", 403);
     const login = url === "/api/v1/auth/login";
     if (
       !login &&
@@ -624,8 +663,9 @@ export async function createApp(options: AppOptions) {
     snapshot_backup:snapshotBackup.status,
     diagnostics:log.summary(),
     model_budget:{usage:modelBudget.status(),recovery_protected:!!store.runtimeMeta().budget_guard},
-    scheduler: { last_tick: scheduler.lastTick, error: scheduler.lastError },
-    planning: { error: core.coordinator.lastError },
+    scheduler: { last_tick: scheduler.lastTick, error: scheduler.lastError, last_dispatch: scheduler.lastDispatch,
+      queued_proactive: (store.db.prepare("SELECT count(*) AS n FROM outbox WHERE counts_as_proactive=1 AND status='pending'").get() as any).n },
+    planning: { error: core.coordinator.lastError, gap: store.runtimeMeta().planning_gap ?? null },
     assistant: { error: core.assistant.lastError },
     qq: channel.health(),
     agent: agentStatus,
@@ -867,15 +907,7 @@ export async function createApp(options: AppOptions) {
             input_id: { type: "string", maxLength: 200 },
             call_id: { type: "string", maxLength: 200 },
             operation: {
-              enum: [
-                "list",
-                "search",
-                "read",
-                "write",
-                "edit",
-                "rename",
-                "delete",
-              ],
+              enum: ["list", "search", "read", "write", "edit", "rename", "delete"],
             },
             path: { type: "string", maxLength: 1024 },
             new_path: { type: "string", maxLength: 1024 },
@@ -892,9 +924,7 @@ export async function createApp(options: AppOptions) {
     async (request) => {
       const result = await workspaceCall(core, request.body);
       store.db
-        .prepare(
-          "UPDATE inbox SET metadata_json=json_set(metadata_json,'$.workspace_calls',json_insert(COALESCE(json_extract(metadata_json,'$.workspace_calls'),'[]'),'$[#]',json(?))) WHERE id=?",
-        )
+        .prepare("UPDATE inbox SET metadata_json=json_set(metadata_json,'$.workspace_calls',json_insert(COALESCE(json_extract(metadata_json,'$.workspace_calls'),'[]'),'$[#]',json(?))) WHERE id=?")
         .run(
           JSON.stringify({
             operation: request.body.operation,
@@ -903,13 +933,9 @@ export async function createApp(options: AppOptions) {
           }),
           request.body.input_id,
         );
-      if (
-        ["write", "edit", "rename", "delete"].includes(request.body.operation)
-      ) {
+      if (["write", "edit", "rename", "delete"].includes(request.body.operation)) {
         store.db
-          .prepare(
-            "UPDATE inbox SET metadata_json=json_set(metadata_json,'$.workspace_operations',json_insert(COALESCE(json_extract(metadata_json,'$.workspace_operations'),'[]'),'$[#]',json(?))) WHERE id=?",
-          )
+          .prepare("UPDATE inbox SET metadata_json=json_set(metadata_json,'$.workspace_operations',json_insert(COALESCE(json_extract(metadata_json,'$.workspace_operations'),'[]'),'$[#]',json(?))) WHERE id=?")
           .run(
             JSON.stringify({
               operation: request.body.operation,
@@ -958,19 +984,10 @@ export async function createApp(options: AppOptions) {
                 "restore_version",
               ],
             },
-            kind: {
-              enum: ["daily", "weekly", "monthly", "quarterly", "yearly"],
-            },
+            kind: { enum: ["daily", "weekly", "monthly", "quarterly", "yearly"] },
             date: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
             scope: {
-              enum: [
-                "all",
-                "habits",
-                "tasks",
-                "plans",
-                "controls",
-                "proposals",
-              ],
+              enum: ["all", "habits", "tasks", "plans", "controls", "proposals"],
             },
             query: { type: "string", maxLength: 200 },
             ids: {
@@ -1038,8 +1055,8 @@ export async function createApp(options: AppOptions) {
     },
   );
   const modelBudget=new ModelBudget(store,env.LLM_MODEL);
-  app.post<{Body:{input_id:string;kind:"front"|"background"|"compose"|"self_test";tools_hash?:string}}>("/internal/model/jobs/start",{
-    schema:{body:{type:"object",additionalProperties:false,required:["input_id","kind","tools_hash"],properties:{input_id:{type:"string",maxLength:200},kind:{enum:["front","background","compose","self_test"]},tools_hash:{type:"string",pattern:"^sha256:[a-f0-9]{64}$"}}}},
+  app.post<{Body:{input_id:string;kind:"front"|"background"|"compose"|"classify"|"self_test";tools_hash?:string}}>("/internal/model/jobs/start",{
+    schema:{body:{type:"object",additionalProperties:false,required:["input_id","kind","tools_hash"],properties:{input_id:{type:"string",maxLength:200},kind:{enum:["front","background","compose","classify","self_test"]},tools_hash:{type:"string",pattern:"^sha256:[a-f0-9]{64}$"}}}},
   },async request=>store.exclusive(()=>{
     if(request.body.tools_hash!==hash(JSON.stringify(AGENT_TOOLS)))throw new AppError("AGENT_CONTRACT_MISMATCH","工具合同与Core不兼容",409);
     return beginModelJob(store,request.body.input_id,request.body.kind);

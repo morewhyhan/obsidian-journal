@@ -81,7 +81,7 @@ class SecretaryPlugin(Star):
             # Ordinary prose is never interpreted as an execution receipt.
             result = await turn.call("submit_proposal", proposal)
             observed.append({"tool": "submit_proposal", "result": result})
-        for definition in self.bridge.tools:
+        for definition in self.bridge.tools_for(turn.native, payload["input"]["id"] == "model-self-test"):
             name = definition["name"]
             if payload["input"].get("id") == "model-self-test" and name != "submit_proposal":
                 continue
@@ -206,6 +206,51 @@ class SecretaryPlugin(Star):
             system_prompt=payload.get('instructions', '') + '\n现在只生成一条要发给用户的自然语言消息，不执行操作。依据给出的真实状态、用途、用户偏好和当下语境表达。内部草稿只是事实线索，不照抄固定提示。简短像熟悉工作的助理，不列能力清单、不说教、不追加无必要问题。准确保留时间、数量、失败与未知；不能把提醒或建议说成用户已做或操作已成功。直接输出消息正文，不输出JSON。',
             tools=ToolSet(), contexts=[], max_steps=1, tool_call_timeout=30, stream=False)
         return result_text(answer)
+
+    async def classify_secretary(self, payload):
+        """C2 understanding only: no tools, no side effects, strict JSON back."""
+        inputs = payload.get("inputs") or []
+        if not isinstance(inputs, list) or not inputs or len(inputs) > 20:
+            return {"items": []}
+        message = AstrBotMessage()
+        message.type = MessageType.FRIEND_MESSAGE
+        message.self_id = 'core'
+        message.message_id = 'classify'
+        message.sender = MessageMember(user_id='core', nickname='Core')
+        message.message = []
+        message.message_str = '判断这些消息各自在说什么'
+        event = IsolatedEvent(message.message_str, message,
+            PlatformMetadata(name='secretary', description='Core internal understanding', id='secretary-internal'), 'classify')
+        prompt = json.dumps({"inputs": [
+            {"input_id": item.get("id"), "text": item.get("text")} for item in inputs
+        ]}, ensure_ascii=False)
+        answer = await self.context.tool_loop_agent(event=event,
+            chat_provider_id='secretary-deepseek',
+            prompt=prompt,
+            system_prompt=(payload.get('instructions') or '') +
+                '\n现在只判断每条消息在说什么，不执行任何操作。对每条输入给出 acts 数组：'
+                'kind 取 query/report/discuss/instruct/decide/correct/stop/unknown；'
+                'relation 取 unrelated/continue/replace/cancel/unknown；'
+                'affects 取 business/contact/context 的子集；target_scope 取 explicit/conversation/unknown；'
+                'evidence_span 为原文码点区间 {"start":整数,"end":整数}，start 不小于 0，end 大于 start，且不超过原文长度。'
+                '不相干的闲聊用 kind=discuss、relation=unrelated、affects 为空。'
+                '只输出 JSON：{"items":[{"input_id":"...","interpretation":{"acts":[...]}}]}，不输出其他文字；不确定就少写或写 unknown，不要编造。',
+            tools=ToolSet(), contexts=[], max_steps=1, tool_call_timeout=30, stream=False)
+        text = result_text(answer)
+        try:
+            data = json.loads(text)
+        except Exception:
+            start, end = text.find('{'), text.rfind('}')
+            if start < 0 or end <= start:
+                raise ValueError("AGENT_INVALID")
+            data = json.loads(text[start:end + 1])
+        items = data.get("items") if isinstance(data, dict) else None
+        if not isinstance(items, list) or len(items) > len(inputs):
+            raise ValueError("AGENT_INVALID")
+        known = {item.get("id") for item in inputs}
+        clean = [item for item in items
+                 if isinstance(item, dict) and item.get("input_id") in known]
+        return {"items": clean}
 
     async def terminate(self):
         await self.bridge.close()

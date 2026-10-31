@@ -13,6 +13,7 @@ import { requireCapability } from "./policy.js";
 import { businessCall, type BusinessCall } from "./agent-runtime.js";
 import { checkGrant } from "./background-grant.js";
 import { recordQuery,queryStamp,advanceOwnReads } from "./read-stamps.js";
+import { searchFacts } from "./facts.js";
 import { actionSchema } from "../../packages/contracts/api.js";
 import { actionFields } from "../../packages/contracts/action-fields.js";
 
@@ -113,7 +114,9 @@ export async function applicationCall(
   const snapshot=core.store.registry(),stamp=queryStamp(core.store,args,snapshot);
   const result=await applicationOperation(core,args,extra);
   recordQuery(core.store,args.input_id,args,snapshot,stamp);
-  return result;
+  // Query results carry the view they were read from, so a later commit is detectable.
+  return result && typeof result==="object" && !Array.isArray(result)
+    ? {...result,snapshot_revision:core.store.snapshotRevision()} : result;
 }
 async function applicationOperation(
   core: Core,
@@ -301,9 +304,15 @@ async function applicationOperation(
           .filter((x) => x.toLowerCase().includes(args.query!.toLowerCase()))
           .join("\n")
       : memory.content;
+    // Facts are paged by their own offset: the memory text offset below is a
+    // character cursor and must not be reused as a row index.
+    const facts = searchFacts(core.store, args.query ?? "", core.store.now(), 20, offset, true);
     return {
       content: content.slice(offset, offset + 4000),
       next_offset: offset + 4000 < content.length ? offset + 4000 : null,
+      facts: facts.items,
+      facts_total: facts.total,
+      facts_next_offset: facts.next_offset,
       principles: memory.principles.slice(offset, offset + 10),
       principles_next_offset:
         offset + 10 < memory.principles.length ? offset + 10 : null,

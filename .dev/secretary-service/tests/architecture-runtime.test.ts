@@ -3,6 +3,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import {afterEach,it,expect,vi} from "vitest";
 import {harness,taskAction,temporary,removeTemporary} from "./helpers.js";
+import {AppError} from "../packages/contracts/types.js";
 import {atomicWrite,hash} from "../apps/core/files.js";
 import {Store,restoreData} from "../apps/core/store.js";
 import {loadConfig} from "../apps/core/config.js";
@@ -68,7 +69,11 @@ it("E8 encrypted snapshot restores exact files and five empty operational tables
   try {
     expect(restored.files.read("note.md")).toBe("PRIVATE-SENTINEL\r\n原文");expect(restored.registry().tasks).toEqual(h.store.registry().tasks);
     expect(restored.config.planning.evening_time).toBe("20:00");
-    expect(restored.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all()).toHaveLength(5);
+    expect(
+      (restored.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as {name:string}[]).map((t) => t.name),
+    ).toEqual(["documents", "events", "fact_usage", "inbox", "outbox", "revocations", "schema_meta"]);
+    // A restored runtime starts with no revocation history of its own.
+    expect(restored.db.prepare("SELECT count(*) n FROM revocations").get()).toEqual({ n: 0 });
     expect(restored.db.prepare("SELECT count(*) n FROM inbox").get()).toEqual({n:0});
     expect(effectivePolicy(restored).capabilities).toMatchObject({background_write:false,contact:false});
     pack.tag=Buffer.alloc(16).toString("base64");expect(()=>decryptBackup(pack,key)).toThrow("认证");
@@ -145,6 +150,16 @@ it("D09 a repeated file intention with a different call label returns its existi
   expect(h.store.db.prepare("SELECT count(*) n FROM events WHERE kind='tool_effect' AND input_id=?").get(input.id)).toEqual({n:1});
   await expect(workspaceCall(h.core,{...args,call_id:"first",content:"different"})).rejects.toThrow("调用标识");
 });
+it("C2 classification runs through a bounded, exclusive model job slot",async()=>{
+  const h=setup();
+  const job=beginModelJob(h.store,"classify-"+Math.random().toString(16).slice(2),"classify");
+  expect(job.kind).toBe("classify");
+  expect(Date.parse(job.deadline_at)-Date.parse(h.store.now())).toBe(60000);
+  // Understanding cannot run in parallel with another model call.
+  expect(()=>beginModelJob(h.store,"classify-other","classify")).toThrow("模型槽");
+  endModelJob(h.store,job.id);
+  expect(beginModelJob(h.store,"classify-next","classify").kind).toBe("classify");
+});
 it("R2 restarting after the artifact was written reconciles real completion without another model call",async()=>{
   const h=setup(),file="03. Manual/recovered.md";
   await h.run({type:"save_work",work:{key:"recovered",summary:"准备已接受材料",owner:"assistant",next_action:"写入准确材料",
@@ -153,6 +168,92 @@ it("R2 restarting after the artifact was written reconciles real completion with
   h.core.agent={executionMode:"tools-v2",interpret:async()=>{calls++;throw new Error("must not run");}};
   await runDelegatedWork(h.core);
   expect(calls).toBe(0);expect(h.store.registry().followups![0].work?.resolution?.kind).toBe("completed");
+});
+it("D08b the model context stays bounded when the vault is large",async()=>{
+  const h=setup(),input=active(h);
+  for(let i=0;i<35;i++)
+    await h.run({...taskAction,title:"任务"+i} as any);
+  for(let i=0;i<11;i++)
+    await businessCall(h.core,{input_id:input.id,call_id:"prop"+i,operation:"save_proposals",
+      action_groups:[{action_identity:"prop"+i,actions:[{...taskAction,title:"建议"+i}]}]} as any);
+  const context=h.core.context(input as any) as any;
+  expect(context.items.length).toBeLessThanOrEqual(30);
+  expect(context.proposals.length).toBeLessThanOrEqual(10);
+
+  // The model is told that it is only seeing part of the state.
+  expect(context.truncated.items).toBe(true);
+  expect(context.truncated.proposals).toBe(true);
+  expect(context.available_counts.items).toBeGreaterThan(30);
+});
+it("S3c a background planning gap is recorded and visible to the next turn",async()=>{
+  const h=setup(),file="03. Manual/gap.md";
+  await h.run({type:"save_work",work:{key:"gap",summary:"准备材料",owner:"assistant",next_action:"写入材料",
+    refs:[{kind:"note",path:file,role:"output"}],done_when:{kind:"material_verified",path:file,check:{kind:"contains_all",terms:["有效入口"]}}}});
+  h.core.agent={executionMode:"tools-v2",interpret:async()=>{
+    throw new AppError("PLANNING_CONFLICT","连带安排无法放入剩余时间，请选择保留哪项承诺",409);
+  }};
+  await runDelegatedWork(h.core);
+  const gap=h.store.runtimeMeta().planning_gap;
+  expect(gap?.message).toContain("无法放入");
+  // The next turn can see it without reading logs.
+  const context=h.core.context(h.input("看看有什么要决定") as any) as any;
+  expect(context.planning_gap?.message).toContain("无法放入");
+  // Repeating the same failure keeps a bounded history rather than growing it.
+  h.core.recordPlanningGap("第二次同类缺口");
+  const history = (h.core.context(h.input("再看一下") as any) as any).recent_planning_gaps;
+  expect(history).toHaveLength(2);
+  expect(history.at(-1).message).toBe("第二次同类缺口");
+  // The responsibility is not marked complete by a failed background attempt.
+  expect(h.store.registry().followups![0].status).toBe("open");
+
+  // The user changes the day's constraint (here: allow using that day's reserve),
+  // and the recorded gap stops being reported as current.
+  await h.run({
+    type: "set_planning",
+    preferences: {
+      availability: [{ weekdays: [1, 2, 3, 4, 5, 6, 7], start: "10:00", end: "20:00" }],
+      buffer_minutes: 0,
+    },
+  } as any);
+  expect(h.store.runtimeMeta().planning_gap).toBeUndefined();
+  expect((h.core.context(h.input("再看看") as any) as any).planning_gap).toBeNull();
+});
+it("C4 an identical failing preparation stops after two attempts instead of opening endless jobs",async()=>{
+  const h=setup(),file="03. Manual/materials.md";
+  await h.run({type:"save_work",work:{key:"materials",summary:"准备已接受材料",owner:"assistant",next_action:"查材料并写入",
+    refs:[{kind:"note",path:file,role:"output"}],done_when:{kind:"material_verified",path:file,check:{kind:"contains_all",terms:["有效入口"]}}}});
+  let calls=0;
+  h.core.agent={executionMode:"tools-v2",interpret:async()=>{calls++;throw new Error("model unavailable");}};
+  await runDelegatedWork(h.core);
+  await runDelegatedWork(h.core);
+  await runDelegatedWork(h.core);
+  // Same cause is not retried forever: exactly two attempts, then the责任 stays open.
+  expect(calls).toBe(2);
+  const follow=h.store.registry().followups![0];
+  expect(follow.status).toBe("open");
+  expect(follow.work?.resolution).toBeUndefined();
+  expect(follow.analysis).toMatchObject({status:"failed",attempts:2});
+  expect(h.store.db.prepare("SELECT count(*) n FROM inbox WHERE channel='coordinator'").get()).toEqual({n:2});
+  // Nothing was faked as done: no artifact, no completed resolution, no extra job.
+  expect(fs.existsSync(path.join(h.root,file))).toBe(false);
+});
+it("E11 a hundred identical wake-ups cannot multiply attempts or invent new causes",async()=>{
+  const h=setup(),file="03. Manual/storm.md";
+  await h.run({type:"save_work",work:{key:"storm",summary:"准备材料",owner:"assistant",next_action:"查材料",
+    refs:[{kind:"note",path:file,role:"output"}]}});
+  let calls=0;
+  h.core.agent={executionMode:"tools-v2",interpret:async()=>{calls++;throw new Error("model unavailable");}};
+  for(let i=0;i<100;i++)await runDelegatedWork(h.core);
+  expect(calls).toBe(2);
+  expect(h.store.db.prepare("SELECT count(*) n FROM inbox WHERE channel='coordinator'").get()).toEqual({n:2});
+  const follow=h.store.registry().followups![0];
+  expect(follow.analysis).toMatchObject({status:"failed",attempts:2});
+  expect(follow.status).toBe("open");
+  // New evidence is a genuinely new cause, so one re-evaluation is allowed and bounded again.
+  atomicWrite(path.join(h.root,file),"新的材料片段");h.advance(24*60*60*1000);
+  await runDelegatedWork(h.core);expect(calls).toBe(3);
+  for(let i=0;i<100;i++)await runDelegatedWork(h.core);
+  expect(calls).toBe(4);
 });
 it("E3 restored budgets permit only an explicitly approved finite allowance and keep its consumption after restart",async()=>{
   const h=setup();h.store.updateRuntimeMeta(m=>({...m,budget_guard:true,budget_guard_day:"2026-10-23"}));
@@ -191,7 +292,12 @@ it("D25c a prompt that still routes business changes through submit_proposal is 
 });
 it("D25b an oversized prompt set fails at startup instead of every model turn",()=>{
   const h=setup();
-  atomicWrite(h.store.files.resolve(".agent/prompts/workflows.md","internal"),"必须遵守的长期规则。".repeat(3000));
+  // Size the fixture from the configured budget so the guard keeps protecting
+  // the real invariant when the limit changes.
+  const unit = "必须遵守的长期规则。";
+  const limit = h.store.config.agent.budget.request_input_tokens;
+  const repeats = Math.ceil((limit * 1.5) / unit.length);
+  atomicWrite(h.store.files.resolve(".agent/prompts/workflows.md","internal"), unit.repeat(repeats));
   expect(()=>loadRuntimeCombination(h.store,{LLM_MODEL:"deepseek-flash"})).toThrow("模型输入预算");
 });
 it("D10 workspace range reads detect a new file while successful own writes advance only the checked baseline",async()=>{

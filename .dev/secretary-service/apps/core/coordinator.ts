@@ -354,6 +354,8 @@ export class Coordinator {
               settings,
               s.config.timezone,
               operation,
+              // A boundary repair is automatic: it keeps the day's reserve.
+              true,
             ),
           );
           repairs.push(t.title + "已移出新的休息时段，截止不变");
@@ -406,6 +408,8 @@ export class Coordinator {
                 settings,
                 s.config.timezone,
                 operation,
+                // A progress report is a fact, not permission to spend the reserve.
+                true,
               ),
             );
             repairs.push(

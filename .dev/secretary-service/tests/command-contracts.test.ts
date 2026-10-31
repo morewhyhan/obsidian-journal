@@ -85,6 +85,25 @@ it("accepted amendments preserve the exact prior proposal and selected scope acr
   expect(decision.source.input_id).toBe(input.id);
 });
 
+it("E14 a commit that cannot reach the disk is uncertain and is not duplicated on retry", async () => {
+  const h=setup(), input=session(h);
+  const registry=h.store.files.resolve(h.store.config.storage.registry,"internal");
+  const good=fs.readFileSync(registry,"utf8");
+  fs.rmSync(registry);
+  fs.mkdirSync(registry); // the path is occupied: the write cannot land
+  const attempt=()=>businessCall(h.core,{input_id:input.id,call_id:"disk-blocked",operation:"apply_changes",
+    action_groups:[{action_identity:"report",actions:[task("报告")]}]});
+  await expect(attempt()).rejects.toMatchObject({code:"STORAGE_UNAVAILABLE"});
+  // Nothing was reported as saved, and the file is still the blocker.
+  expect(fs.statSync(registry).isDirectory()).toBe(true);
+  expect(h.store.db.prepare("SELECT count(*) n FROM events WHERE kind='business'").get()).toMatchObject({n:0});
+  // Restoring the path lets the same operation finish exactly once.
+  fs.rmdirSync(registry);
+  fs.writeFileSync(registry,good,"utf8");
+  const retried=await attempt();
+  expect(["applied","already_applied"]).toContain(retried.results[0].status);
+  expect(h.store.registry().tasks.filter((t)=>t.title==="报告")).toHaveLength(1);
+});
 it("a prepared commit failure is uncertain, never reported as safely not applied", async () => {
   const h=setup(), input=session(h);
   h.store.fault=stage=>{if(stage==="prepared") throw new AppError("RECOVERY_CONFLICT","合成崩溃",409);};

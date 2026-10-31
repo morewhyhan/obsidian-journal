@@ -20,8 +20,10 @@ export function effectivePolicy(store:Store,r:Registry=store.registry()) {
     contact:writable && !disabled && !recoveryBlocks("contact") && time.trusted && ruleValue(r,"contact.enabled",true,now) && !reason("contact").length,
     model:runtimeAvailable && !reason("model").length,
   };
+  let revocationRevision=0;
+  try{revocationRevision=store.revocationRevision();}catch{revocationRevision=-1;}
   return {capabilities,recovery_guard:guard??null,operational_blocks:blocks,time:{trusted:time.trusted,reason:time.reason},
-    policy_stamp:hash(canonicalJson([r.rules_revision??0,r.planning_version??0,
+    policy_stamp:hash(canonicalJson([r.rules_revision??0,r.planning_version??0,revocationRevision,
       (r.user_rules??[]).filter(x=>x.enabled && x.starts_at<=now && (!x.ends_at || x.ends_at>now)).map(x=>[x.id,x.version]),
       guard,blocks,store.config,capabilities]))};
 }

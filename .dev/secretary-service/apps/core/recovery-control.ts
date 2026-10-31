@@ -7,9 +7,16 @@ export type RecoveryScope="background_write"|"contact";
 /** Offline maintenance only: no model tool or channel endpoint exposes this authority. */
 export function recoveryInventory(s:Store) {
   const r=s.registry(),meta=s.runtimeMeta(),guard=meta.recovery_guard??null;
-  const snapshot={registry:r,configuration:s.config,guard,restore_boundary:meta.restore_boundary??null};
-  return {inventory_hash:hash(canonicalJson(snapshot)),restore_boundary:meta.restore_boundary??null,guard,
-    review_required:["核对恢复点之后的取消、撤权、暂停和事故记录", "核对当前委托对象、固定路径、允许能力和有效期", "单独确认允许主动联系；不恢复旧发送队列"],
+  const revocationHistory=meta.revocation_history??{source:"unknown",revision:s.revocationRevision(),complete:false};
+  // A prepared commit whose files were edited by hand is a review item, never a rollback.
+  const conflicts=s.db.prepare("SELECT id,error_code,payload_json FROM events WHERE status='conflict' AND kind='business' ORDER BY rowid").all() as any[];
+  const snapshot={registry:r,configuration:s.config,guard,restore_boundary:meta.restore_boundary??null,revocation_history:revocationHistory,
+    conflicts:conflicts.map(x=>({id:x.id,code:x.error_code,path:JSON.parse(x.payload_json)?.recovery_conflict?.path??null}))};
+  return {inventory_hash:hash(canonicalJson(snapshot)),conflicts:snapshot.conflicts,restore_boundary:meta.restore_boundary??null,guard,
+    revocation_history:revocationHistory,
+    review_required:[...(conflicts.length?["有 "+conflicts.length+" 个提交因文件被外部改动而暂停，需核对原文后决定是否重做"]:[]),
+      "核对恢复点之后的取消、撤权、暂停和事故记录", "核对当前委托对象、固定路径、允许能力和有效期", "单独确认允许主动联系；不恢复旧发送队列",
+      ...(revocationHistory.complete===false?["恢复带来的是备份时的撤销清单；备份之后发生的撤销未知，需要提供最新清单或明确恢复范围"]:[])],
     current:{rules:(r.user_rules??[]).filter(x=>x.enabled).map(x=>({id:x.id,version:x.version,key:x.key,ends_at:x.ends_at})),
       controls:r.controls.map(x=>({id:x.id,version:x.version})),
       delegations:(r.followups??[]).filter(x=>x.status!=="resolved" && x.work?.delegation).map(x=>({work_id:x.id,step_id:x.work!.step_id,status:x.status,

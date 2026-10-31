@@ -4,6 +4,7 @@ import type { Store } from "./store.js";
 import { canonicalJson,hash } from "./files.js";
 import {localDate} from "../../packages/calendar/index.js";
 import fs from "node:fs";
+import { factsDigest } from "./facts.js";
 
 type Query={operation:string;scope?:string;query?:string;ids?:string[];date?:string;offset?:number};
 type Stamp={key:string;query?:Query;path?:string;resource?:{operation:"list"|"search";prefix:string};digest:string};
@@ -33,7 +34,8 @@ function digest(s:Store,r:Registry,stamp:Stamp) {
   if(!["state","followups","rules"].includes(q.operation))return hash(canonicalJson({
     tasks:r.tasks,habits:r.habits,plans:r.plans,controls:r.controls,proposals:r.proposals,
     rules:r.user_rules??[],automations:r.automations??[],followups:r.followups??[],focus:r.focus_date,
-    planning:r.planning_preferences,rules_revision:r.rules_revision??0,planning_version:r.planning_version??0,day:s.day(q.date!)}));
+    planning:r.planning_preferences,rules_revision:r.rules_revision??0,planning_version:r.planning_version??0,
+    facts:factsDigest(s),day:s.day(q.date!)}));
   return hash(canonicalJson(select(r,stamp.query!)));
 }
 function metadata(s:Store,input:string){const row=s.db.prepare("SELECT metadata_json FROM inbox WHERE id=?").get(input) as any;return row?JSON.parse(row.metadata_json):null;}

@@ -13,6 +13,7 @@ import { AppError } from "../../packages/contracts/types.js";
 import { Store,restoreData } from "./store.js";
 import { SnapshotBackup,backupKey,decryptBackup } from "./snapshot-backup.js";
 import { recoveryInventory,releaseRecovery,type RecoveryScope } from "./recovery-control.js";
+import { explainAutomation } from "../../packages/domain/automation-diagnostics.js";
 import {approveRecoveryBudget} from "./model-budget.js";
 async function main() {
   const command = process.argv[2],
@@ -66,12 +67,44 @@ async function main() {
     );
     return;
   }
+  if (command === "explain-automation") {
+    // Reads the truth files directly: the running service owns the lock, and "why
+    // did my reminder not fire" must be answerable without stopping it.
+    const registryFile = path.join(root, ".agent/state/registry.json");
+    const configFile = path.join(root, ".agent/config.json");
+    if (!fs.existsSync(registryFile))
+      throw new AppError("VAULT_INCOMPLETE", "这个目录里没有 registry.json", 400);
+    const registry = JSON.parse(fs.readFileSync(registryFile, "utf8"));
+    const config = fs.existsSync(configFile)
+      ? JSON.parse(fs.readFileSync(configFile, "utf8"))
+      : {};
+    const quiet = config.notifications?.quiet_hours ?? { start: "23:00", end: "08:00" };
+    const zone = config.timezone ?? "Asia/Shanghai";
+    const now = new Date().toISOString();
+    const rows = (registry.automations ?? []).map((automation: any) => ({
+      title: automation.title,
+      ...explainAutomation(automation, quiet, now, zone),
+    }));
+    console.log(JSON.stringify({ now, zone, quiet_hours: quiet, automations: rows }, null, 1));
+    return;
+  }
   if(command==="backup-data") {
     const store=new Store(root,loadConfig(root));
     try {
       const backup=new SnapshotBackup(store,env.SECRETARY_BACKUP_DIR,env.SECRETARY_BACKUP_KEY_FILE);
       await backup.tick(true);console.log(JSON.stringify(backup.status));
       if(backup.status.state!=="saved")process.exitCode=1;
+    } finally {await store.close();}
+    return;
+  }
+  if(command==="recovery-import-revocations") {
+    const file=process.argv[3];
+    if(!file || !fs.existsSync(file))throw new AppError("REVOCATION_LIST_REQUIRED","需要最新的撤销清单文件");
+    const payload=JSON.parse(fs.readFileSync(file,"utf8"));
+    const store=new Store(root,loadConfig(root));
+    try{
+      const result=store.importRevocations(payload);
+      console.log(JSON.stringify({...result,revocation_history:store.runtimeMeta().revocation_history},null,2));
     } finally {await store.close();}
     return;
   }
@@ -88,7 +121,7 @@ async function main() {
   if (command !== "preflight")
     throw new AppError(
       "UNKNOWN_COMMAND",
-      "使用 preflight、password、init-backup、backup-data、restore-data <文件>、recovery-check 或 recovery-release <清单hash> <background_write,contact> reviewed-current-authority",
+      "使用 preflight、password、init-backup、backup-data、restore-data <文件>、recovery-import-revocations <清单文件>、recovery-check 或 recovery-release <清单hash> <background_write,contact> reviewed-current-authority",
     );
   const cfg = loadConfig(root);
   validateProductionSettings({
@@ -110,11 +143,13 @@ async function main() {
     vault: "passed",
     configuration: "passed",
     web:
-      !!env.SECRETARY_WEB_PASSWORD_HASH &&
-      !!env.SECRETARY_SESSION_SIGNING_KEY &&
-      !!env.SECRETARY_PUBLIC_ORIGIN
-        ? "configured"
-        : "missing",
+      env.SECRETARY_WEB_ENABLED === "0"
+        ? "disabled"
+        : !!env.SECRETARY_WEB_PASSWORD_HASH &&
+            !!env.SECRETARY_SESSION_SIGNING_KEY &&
+            !!env.SECRETARY_PUBLIC_ORIGIN
+          ? "configured"
+          : "missing",
     astrbot:
       !!env.SECRETARY_ASTRBOT_URL && !!env.SECRETARY_BRIDGE_TOKEN
         ? "configured"
@@ -148,6 +183,11 @@ async function main() {
     ),
   );
   if (checks.web === "missing") process.exitCode = 1;
+  if (env.SECRETARY_WEB_ENABLED === "0" && checks.qq !== "configured") {
+    // Without the web surface, QQ is the only way in and must be usable.
+    console.error("QQ-only 部署需要已配置的 QQ 接入（SECRETARY_QQ_ENABLED=1 及配对信息）");
+    process.exitCode = 1;
+  }
 }
 main().catch((error) => {
   console.error(

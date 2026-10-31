@@ -10,7 +10,9 @@ import {
 import { id, hash, atomicWrite } from "../apps/core/files.js";
 import fs from "node:fs";
 import { Store, restoreData } from "../apps/core/store.js";
-import { loadConfig } from "../apps/core/config.js";
+import { recoveryInventory } from "../apps/core/recovery-control.js";
+import { readFacts, revokedFactIds, factsRestricted } from "../apps/core/facts.js";
+import { loadConfig, validateProductionSettings } from "../apps/core/config.js";
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const close of cleanups.splice(0)) await close();
@@ -45,6 +47,57 @@ async function setup() {
   });
   return { ...instance, root, headers };
 }
+it("a QQ-only deployment refuses every web session instead of booting unauthenticated", async () => {
+  const root = temporary();
+  const instance = await createApp({
+    vault: root,
+    passwordHash: "",
+    sessionKey: "",
+    secure: false,
+    timers: false,
+    env: { SECRETARY_WEB_ENABLED: "0" },
+  });
+  cleanups.push(async () => {
+    await instance.app.close();
+    removeTemporary(root);
+  });
+  const login = await instance.app.inject({
+    method: "POST",
+    url: "/api/v1/auth/login",
+    payload: { password: "anything" },
+  });
+  expect(login.statusCode).toBe(403);
+  expect(login.json().error.code).toBe("WEB_DISABLED");
+  const command = await instance.app.inject({
+    method: "POST",
+    url: "/api/v1/commands",
+    payload: taskAction,
+  });
+  expect(command.statusCode).toBe(403);
+  expect(command.json().error.code).toBe("WEB_DISABLED");
+  expect((await instance.app.inject({ method: "GET", url: "/healthz" })).statusCode).toBe(200);
+  // The machine bridge still requires its own token.
+  const bridge = await instance.app.inject({ method: "GET", url: "/internal/agent/status" });
+  expect(bridge.statusCode).toBe(403);
+});
+
+it("production config accepts a QQ-only deployment but still requires web credentials when enabled", () => {
+  expect(() =>
+    validateProductionSettings({
+      passwordHash: "",
+      sessionKey: "",
+      env: { NODE_ENV: "production", SECRETARY_WEB_ENABLED: "0" },
+    }),
+  ).not.toThrow();
+  expect(() =>
+    validateProductionSettings({
+      passwordHash: "",
+      sessionKey: "",
+      env: { NODE_ENV: "production" },
+    }),
+  ).toThrow();
+});
+
 it("unknown command fields are rejected rather than silently stripped before execution",async()=>{
   const h=await setup();
   const response=await h.app.inject({method:"POST",url:"/api/v1/commands",headers:h.headers(),payload:{...taskAction,unrecognized_next_action:"必须不能被静默丢弃"}});
@@ -213,6 +266,116 @@ it("T36 legacy auxiliary state round-trips without weakening registry or daily r
     };
     expect(() => restoreData(empty, malformed)).toThrow("状态格式不兼容");
     expect(fs.readdirSync(empty)).toHaveLength(0);
+  }
+});
+it("T36 a backup carries its revocation markers and a restore never resurrects forgotten content", async () => {
+  const h = await setup();
+  const act = (action: any) =>
+    h.core.execute(
+      { id: id("input"), channel: "web", actor_ref: "user", external_id: id("msg"), text: "用户明确交代", occurred_at: new Date().toISOString() },
+      [action],
+      "test",
+      true,
+    );
+  await act({ type: "remember_fact", fact: "小蓝指蓝封面词汇本。", kind: "user_confirmed", fact_subject: "小蓝", fact_scope: ["学习"] });
+  const factsPath = h.store.files.resolve(".agent/context/facts.json", "internal");
+  const saved = JSON.parse(fs.readFileSync(factsPath, "utf8")).facts;
+  await act({ type: "forget_fact", target_id: saved[0].id, expected_version: saved[0].version });
+  expect(h.store.revocationRevision()).toBe(1);
+
+  const bundle = h.store.exportData() as any;
+  // Only opaque markers travel with the backup; the erased body does not.
+  expect(bundle.revocations).toMatchObject({ revision: 1 });
+  expect(bundle.revocations.entries).toHaveLength(1);
+  expect(bundle.revocations.entries[0]).toMatchObject({ kind: "fact", target_id: saved[0].id, reason_code: "user_forgot" });
+  expect(JSON.stringify(bundle.revocations)).not.toContain("蓝封面");
+
+  // An older body restored from disk must still lose to the imported marker.
+  const factsFile = bundle.files.find((f: any) => f.path === ".agent/context/facts.json");
+  const resurrected = JSON.stringify({ ...JSON.parse(factsFile.content), facts: saved });
+  const stale = {
+    ...bundle,
+    files: bundle.files.map((f: any) =>
+      f.path === ".agent/context/facts.json"
+        ? { ...f, content: resurrected, hash: hash(resurrected) }
+        : f),
+  };
+  const target = temporary();
+  restoreData(target, stale);
+  const store = new Store(target, loadConfig(target), () => new Date("2026-10-30T12:00:00Z"));
+  expect(store.revocationRevision()).toBe(1);
+  const marker = store.db.prepare("SELECT kind,target_id FROM revocations").all() as any[];
+  expect(marker).toHaveLength(1);
+  expect(marker[0]).toMatchObject({ kind: "fact", target_id: saved[0].id });
+  // The restored runtime cannot auto-load facts and knows its history is partial.
+  expect(store.runtimeMeta().recovery_guard).toMatchObject({ active: true });
+  const inventory: any = recoveryInventory(store);
+  expect(inventory.revocation_history).toMatchObject({ source: "backup", revision: 1, complete: false });
+  expect(inventory.review_required.join(" ")).toContain("最新清单");
+  expect(factsRestricted(store)).toBe(true);
+  expect(revokedFactIds(store).has(saved[0].id)).toBe(true);
+  store.close();
+  // Windows can keep the just-closed database handle locked for a moment.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      removeTemporary(target);
+      break;
+    } catch (error) {
+      if (attempt === 9) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+});
+it("T36 an imported revocation list closes the gap a backup alone cannot know", async () => {
+  const h = await setup();
+  const act = (action: any) =>
+    h.core.execute(
+      { id: id("input"), channel: "web", actor_ref: "user", external_id: id("msg"), text: "用户明确交代", occurred_at: new Date().toISOString() },
+      [action],
+      "test",
+      true,
+    );
+  await act({ type: "remember_fact", fact: "小蓝指蓝封面词汇本。", kind: "user_confirmed", fact_subject: "小蓝", fact_scope: ["学习"] });
+  // The backup predates the deletion, so it cannot carry the marker.
+  const beforeForget = h.store.exportData() as any;
+  expect(beforeForget.revocations).toMatchObject({ revision: 0, entries: [] });
+  const factsPath = h.store.files.resolve(".agent/context/facts.json", "internal");
+  const saved = JSON.parse(fs.readFileSync(factsPath, "utf8")).facts[0];
+  await act({ type: "forget_fact", target_id: saved.id, expected_version: saved.version });
+  const newerList = (h.store.exportData() as any).revocations;
+  expect(newerList).toMatchObject({ revision: 1 });
+  expect(newerList.entries).toHaveLength(1);
+
+  const target = temporary();
+  restoreData(target, beforeForget);
+  const store = new Store(target, loadConfig(target), () => new Date("2026-10-30T12:00:00Z"));
+  // Restored alone the body is back on disk and no marker suppresses it: only the
+  // recovery guard keeps it out of context, and the inventory says history is partial.
+  expect(readFacts(store).facts.find((fact) => fact.id === saved.id)?.content).toContain("蓝封面");
+  expect(revokedFactIds(store).has(saved.id)).toBe(false);
+  expect(factsRestricted(store)).toBe(true);
+  expect((recoveryInventory(store) as any).revocation_history).toMatchObject({ complete: false });
+  expect((recoveryInventory(store) as any).review_required.join(" ")).toContain("最新清单");
+
+  // Adopting the newer opaque list closes the gap.
+  expect(store.importRevocations(newerList)).toMatchObject({ imported: 1, revision: 1, complete: true });
+  expect(store.revocationRevision()).toBe(1);
+  // The adopted marker now excludes the restored body from retrieval.
+  expect(revokedFactIds(store).has(saved.id)).toBe(true);
+  expect((recoveryInventory(store) as any).revocation_history).toMatchObject({ source: "imported", complete: true });
+  expect((recoveryInventory(store) as any).review_required.join(" ")).not.toContain("最新清单");
+  // Nothing about the deleted body travelled with the list.
+  expect(JSON.stringify(newerList)).not.toContain("蓝封面");
+
+  store.close();
+  for (let attempt = 0; ; attempt++) {
+    try {
+      removeTemporary(target);
+      break;
+    } catch (error) {
+      if (attempt === 9) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
   }
 });
 it("T36 restore validates the entire package before writing and refuses occupied or escaping destinations", async () => {

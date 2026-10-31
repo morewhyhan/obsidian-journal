@@ -91,6 +91,12 @@ export function workAction(r:Registry,a:Action,c:Context):string[]|null {
   const work:NonNullable<Followup["work"]>={key:w.key,summary:w.summary,owner:w.owner,next_action:w.next_action,
     condition:w.condition??null,source:prior?.source??c.source,refs,step_id,
     ...(done ? {done_when:done}:{}),wake_on:w.wake_on??prior?.wake_on??[],
+    // Baselines for declared wake conditions: without them "changed" is a guess.
+    wake_versions:Object.fromEntries((w.wake_on??prior?.wake_on??[]).flatMap(wake=>{
+      const key=wake.ref.id??wake.ref.path;
+      const item=key?referencedObject(r,wake.ref) as {version?:number}|undefined:undefined;
+      return key&&typeof item?.version==="number" ? [[key,item.version]] : [];
+    })),
     delegation:!renewDelegation ? prior!.delegation : {source:c.source,capabilities:["read_related","prepare_next_action","manage_work"],
       object_ids:refs.flatMap(ref=>ref.id?[ref.id]:[]),paths:refs.flatMap(ref=>ref.path?[ref.path]:[]),
       write_paths:refs.flatMap(ref=>ref.role==="output" && ref.path?[ref.path]:[]),

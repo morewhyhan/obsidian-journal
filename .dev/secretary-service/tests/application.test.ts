@@ -6,6 +6,8 @@ import { workspaceCall } from "../apps/core/workspace.js";
 import { atomicWrite } from "../apps/core/files.js";
 import { context, route } from "../packages/calendar/index.js";
 import { resource } from "../apps/core/config.js";
+import { appendFactTo } from "../apps/core/facts.js";
+import { emptyFactFile } from "../packages/contracts/facts.js";
 
 const closers: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -265,4 +267,35 @@ it("a business object loaded through secretary.state can be updated even outside
   await h.core.processPending();
   await expect.poll(() => h.store.day("2026-10-23").occurrences.length).toBe(1);
   expect(h.store.day("2026-10-23").occurrences[0].habit_id).toBe("outside-34");
+});
+
+it("fact pagination matches first and pages second, so the tail is still reachable", async () => {
+  const h = setup();
+  // Fixture state: 25 confirmed facts that share one marker.
+  let file = emptyFactFile();
+  for (let i = 0; i < 25; i++)
+    file = appendFactTo(
+      file,
+      { content: "paging-marker-" + i, kind: "user_reported" },
+      { kind: "input", id: "page-fixture-" + i, channel: "qq", at: h.store.now() },
+      h.store.now(),
+    );
+  atomicWrite(h.store.files.resolve(".agent/context/facts.json", "internal"), JSON.stringify(file));
+
+  const first: any = await h.call({ operation: "preferences", query: "paging-marker" });
+  expect(first.facts_total).toBe(25);
+  expect(first.facts).toHaveLength(20);
+  expect(first.facts_next_offset).toBe(20);
+
+  const second: any = await h.call({
+    operation: "preferences",
+    query: "paging-marker",
+    offset: first.facts_next_offset,
+  });
+  expect(second.facts_total).toBe(25);
+  expect(second.facts).toHaveLength(5);
+  expect(second.facts_next_offset).toBeNull();
+  const seen = new Set([...first.facts, ...second.facts].map((f: any) => f.id));
+  expect(seen.size).toBe(25);
+  expect(second.facts.map((f: any) => f.content)).toContain("paging-marker-24");
 });

@@ -26,7 +26,12 @@ import { applicationCapabilities } from "./application.js";
 import { Coordinator } from "./coordinator.js";
 import { AssistantRuntime } from "./assistant.js";
 import { policyStamp } from "./tool-effects.js";
-import { reconcileWork } from "./work-checks.js";
+import { reconcileWork, wakeOnFeedback } from "./work-checks.js";
+import { searchFacts, readFacts, appendFactTo, forgetFactTo, cleanupRevokedFragments, factsDigest, activeFacts, scrubLegacyUserNotes } from "./facts.js";
+import { recordFactUsage, applyFactUsage } from "./fact-usage.js";
+import { publishInterpretation, understoodSeq, validateInterpretation } from "./classification.js";
+import type { RevocationRecord } from "./facts.js";
+import type { FactDraft, FactFile } from "../../packages/contracts/facts.js";
 import { requireCapability } from "./policy.js";
 import { advanceOwnReads } from "./read-stamps.js";
 import {workInputSchema} from "../../packages/contracts/work.js";
@@ -63,6 +68,13 @@ export interface AgentAdapter {
   executionMode?: "tools-v2";
   interpret(input: Input, context: unknown): Promise<AgentResult>;
   compose?(facts: unknown): Promise<{ text: string }>;
+  /**
+   * C2 understanding for accepted-but-unread inputs. Optional: without it the
+   * gate stays fail-closed (any newer unclassified input holds older writes).
+   */
+  classify?(inputs: { id: string; text: string; occurred_at: string }[]): Promise<{
+    items: { input_id: string; interpretation: unknown }[];
+  } | null>;
   close?(): void;
 }
 
@@ -138,6 +150,12 @@ export class Core {
     this.assistant = new AssistantRuntime(this);
     this.recoverPending();
     this.recoverInterruptedInputs();
+    try {
+      // Finish any revocation cleanup left pending by an earlier run.
+      this.cleanupRevocations();
+    } catch {
+      /* The receipt keeps reporting "清理待完成"; never claim an unverified erase. */
+    }
   }
   inputEffects(inputId: string) {
     const events = this.store.db.prepare(
@@ -183,26 +201,28 @@ export class Core {
         "SELECT * FROM events e WHERE kind='business' AND status='applied' AND json_array_length(payload_json,'$.result.updated_ids')>0 AND NOT EXISTS (SELECT 1 FROM events p WHERE p.parent_id=e.id AND p.kind='diary_projection')",
       )
       .all() as any[];
-    for (const event of unprojected) {
+    const missingMemory = store.db
+      .prepare(
+        "SELECT * FROM events e WHERE kind='business' AND status='applied' AND NOT EXISTS (SELECT 1 FROM events m WHERE m.parent_id=e.id AND m.kind='memory_derivation')",
+      )
+      .all() as any[];
+    for (const event of [...unprojected, ...missingMemory]) {
       const ids = JSON.parse(event.payload_json).result?.updated_ids ?? [];
-      const projectionId = event.id + ":projection";
-      store.db
-        .prepare(
-          "INSERT OR IGNORE INTO events(id,dedupe_key,input_id,parent_id,source,kind,payload_json,created_at) VALUES(?,?,?,?,?,?,?,?)",
-        )
-        .run(
-          projectionId,
-          projectionId,
-          event.input_id,
-          event.id,
-          "core",
-          "diary_projection",
-          JSON.stringify({ target_ids: ids }),
-          store.now(),
-        );
+      for (const [kind, suffix] of [["diary_projection", ":projection"], ["memory_derivation", ":memory"]] as const) {
+        if (kind === "diary_projection" && !unprojected.includes(event)) continue;
+        const id = event.id + suffix;
+        store.db
+          .prepare(
+            "INSERT OR IGNORE INTO events(id,dedupe_key,input_id,parent_id,source,kind,payload_json,created_at) VALUES(?,?,?,?,?,?,?,?)",
+          )
+          .run(id, id, event.input_id, event.id, "core", kind, JSON.stringify({ target_ids: ids }), store.now());
+      }
     }
     this.flushProjections();
     this.flushPeriodProjections();
+    this.flushMemoryDerivations();
+    this.flushWorkReconcile();
+    this.flushReminderValidity();
     if (unprojected.length)
       this.emit("item_changed", {
         ids: [
@@ -216,18 +236,24 @@ export class Core {
       });
     this.rebuildSummary();
   }
-  rebuildSummary() {
+  rebuildSummary(strict = false) {
     try {
       const registry = this.store.registry(),
         date = localDate(this.store.clock(), this.store.config.timezone),
         record = this.store.day(date),
+        // Every source that can invalidate this derivative belongs in the key:
+        // a corrected or forgotten fact must make the summary stale, not "current".
         source =
           "registry:" +
           registry.revision +
           ";day:" +
           date +
           ":" +
-          record.revision,
+          record.revision +
+          ";facts:" +
+          factsDigest(this.store) +
+          ";revocations:" +
+          this.store.revocationRevision(),
         file = this.store.files.resolve(
           ".agent/context/current.md",
           "internal",
@@ -237,7 +263,8 @@ export class Core {
         fs.readFileSync(file, "utf8").includes("<!-- " + source + " -->")
       )
         return;
-      const active = registry.habits.filter((h) => h.status === "active"),
+      const liveFacts = activeFacts(this.store, this.store.now()),
+        active = registry.habits.filter((h) => h.status === "active"),
         tasks = registry.tasks.filter((t) =>
           ["ready", "in_progress", "blocked"].includes(t.status),
         ),
@@ -256,14 +283,17 @@ export class Core {
           tasks.length +
           " 项。\n当天已确认发生 " +
           record.occurrences.filter((o) => o.status === "did").length +
-          " 次。\n" +
+          " 次。\n有效长期事实 " +
+          liveFacts.length +
+          " 条（已撤销的不再计入）。\n" +
           (pause ? "当前暂停主动联系，至 " + pause.ends_at + "。\n" : "") +
           "\n来源：`.agent/state/registry.json`" +
           (record.revision ? "、`" + this.store.dayPath(date) + "`" : "") +
           "。\n此文件为可重建摘要，具体事实以来源文件为准。\n",
       );
       this.summaryError = null;
-    } catch {
+    } catch (error) {
+      if (strict) throw error;
       this.summaryError = "CONTEXT_SUMMARY_FAILED";
     }
   }
@@ -369,21 +399,54 @@ export class Core {
           }
         }
       }
-      const result = this.store.commit(
+      // Filled during prepare, consumed after the commit for the legacy-note scrub.
+      const legacyContents: string[] = [];
+      let workSource = this.source(input);
+      let workReconcileError: string | null = null;
+      // A replay of an interrupted commit can land the tombstone from inside
+      // this call and then abort it; the finally below retries any pending marker
+      // so the note never lags behind the revocation.
+      let result: any;
+      let revocationCleanup: any = null;
+      try {
+        result = this.store.commit(
         executionKey,
         input.channel,
         input.id,
-        (registry, loadDay, operation, rememberFact) => {
+        (registry, loadDay, operation, _rememberFact) => {
           if (actions.length > 20)
             throw new AppError("BATCH_TOO_LARGE", "一次最多20个动作");
+          let stagedFacts: FactFile | null = null;
+          const revocations: RevocationRecord[] = [];
+          const currentFacts = () => stagedFacts ?? readFacts(this.store);
+          const factSource = () => ({ kind: "input" as const, id: input.id, channel: input.channel, at: this.store.now() });
+          const rememberFact = (fact: string, meta?: Omit<FactDraft, "content">) => {
+            stagedFacts = appendFactTo(
+              currentFacts(),
+              { content: fact, kind: meta?.kind ?? "user_reported", ...meta },
+              factSource(),
+              this.store.now(),
+            );
+          };
+          const forgetFact = (targetId: string, expectedVersion: number) => {
+            const { file, revocation, legacy_content } = forgetFactTo(
+              this.store, currentFacts(), targetId, expectedVersion, this.store.now(),
+            );
+            stagedFacts = file;
+            revocations.push(revocation);
+            if (legacy_content) legacyContents.push(legacy_content);
+            return revocation;
+          };
+          workSource = this.source(input);
           const context = {
             operation,
-            source: this.source(input),
+            source: workSource,
             now: this.store.now(),
             zone: this.store.config.timezone,
             loadDay,
             userAuthorized: authorized,
             rememberFact,
+            forgetFact,
             verified,
             planningDefaults: this.store.config.planning,
             quietDefaults: this.store.config.notifications.quiet_hours,
@@ -447,6 +510,9 @@ export class Core {
               ),
           );
           const output = applyActions(registry, ordinary, context);
+          // A user report naming the watched object wakes that work immediately.
+          for (const id of wakeOnFeedback(registry, ordinary, this.store.now(), operation))
+            if (!output.ids.includes(id)) output.ids.push(id);
           if (!acceptedProposals.length)
             for (const p of registry.proposals) {
               if (
@@ -583,12 +649,68 @@ export class Core {
                 replace: a.replace_section === true,
               };
             });
-          output.ids.push(...reconcileWork(this.store,registry,operation,context.source));
-          return periods.length ? { ...output, effects: { periods } } : output;
+          // Work coordination is a consumer like the projections: a failure must
+          // not roll back an already-validated business change, it must be retried.
+          try {
+            output.ids.push(...reconcileWork(this.store,registry,operation,context.source));
+          } catch (error) {
+            workReconcileError = (error as any)?.code ?? "WORK_RECONCILE_FAILED";
+          }
+          return {
+            ...output,
+            ...(periods.length ? { effects: { periods } } : {}),
+            ...(stagedFacts ? { facts: stagedFacts } : {}),
+            ...(revocations.length ? { revocations } : {}),
+          };
         },
         logicalGroups,
       );
+      } finally {
+        try {
+          if (
+            this.store.db
+              .prepare("SELECT 1 FROM revocations WHERE cleanup_state='pending' LIMIT 1")
+              .get()
+          )
+            revocationCleanup = this.cleanupRevocations();
+        } catch {
+          /* cleanup stays pending and the next pass retries */
+        }
+      }
+      // Revocation cleanup is part of the same responsibility: a receipt must not
+      // report a finished forget while the original fragment is still readable.
+      const forgotten = actions.filter((a) => a.type === "forget_fact").map((a) => String(a.target_id));
+      if (forgotten.length) {
+        // The finally above already ran the cleanup (once). Re-running it here
+        // would report zero removals for work that just succeeded.
+        const cleanup = revocationCleanup ?? this.cleanupRevocations(forgotten);
+        // Rows written before the hash column existed have no marker to match by;
+        // their body is still in memory for this call only.
+        for (const legacy of legacyContents) cleanup.legacy_user_md_cleared += scrubLegacyUserNotes(this.store, legacy);
+        (result as Record<string, unknown>).revocation_cleanup = cleanup;
+      }
       this.store.db.transaction(() => {
+        const workEventId = result.operation_id + ":work";
+        this.store.db
+          .prepare(
+            "INSERT OR IGNORE INTO events(id,dedupe_key,input_id,parent_id,source,kind,payload_json,created_at,completed_at,status) VALUES(?,?,?,?,?,?,?,?,?,?)",
+          )
+          .run(
+            workEventId,
+            workEventId,
+            input.id,
+            result.operation_id,
+            "core",
+            "work_reconcile",
+            JSON.stringify({
+              target_ids: result.updated_ids,
+              operation: result.operation_id,
+              source: workSource,
+            }),
+            this.store.now(),
+            workReconcileError ? null : this.store.now(),
+            workReconcileError ? "prepared" : "applied",
+          );
         const eventId = result.operation_id + ":projection";
         this.store.db
           .prepare(
@@ -604,9 +726,30 @@ export class Core {
             JSON.stringify({ target_ids: result.updated_ids }),
             this.store.now(),
           );
+        // Memory derivation is a consumer like any other: its failure is recorded
+        // with a retry window instead of being swallowed by the rebuild.
+        const memoryId = result.operation_id + ":memory";
+        this.store.db
+          .prepare(
+            "INSERT OR IGNORE INTO events(id,dedupe_key,input_id,parent_id,source,kind,payload_json,created_at) VALUES(?,?,?,?,?,?,?,?)",
+          )
+          .run(
+            memoryId,
+            memoryId,
+            input.id,
+            result.operation_id,
+            "core",
+            "memory_derivation",
+            JSON.stringify({ target_ids: result.updated_ids }),
+            this.store.now(),
+          );
       })();
+      if (actions.some((action) => action.type === "set_planning")) this.clearPlanningGap();
       this.flushProjections();
       this.flushPeriodProjections();
+      this.flushMemoryDerivations();
+      this.flushWorkReconcile();
+      this.flushReminderValidity();
       const projectionWarnings: string[] = [];
       for (const a of actions.filter((x) => x.type === "report_automation"))
         this.assistant.queueReportDate(String(a.business_date));
@@ -618,7 +761,43 @@ export class Core {
           .get(result.operation_id)
       )
         projectionWarnings.push("周期重点尚未写入，原文已保留。");
-      this.cancelInvalidContact();
+      // Reminder invalidation is a consumer too: its failure must be retried, not
+      // turned into a false failure of a commit that already applied.
+      try {
+        this.cancelInvalidContact();
+        this.store.db
+          .prepare(
+            "INSERT OR IGNORE INTO events(id,dedupe_key,input_id,parent_id,source,kind,payload_json,created_at,completed_at,status) VALUES(?,?,?,?,?,?,?,?,?,?)",
+          )
+          .run(
+            result.operation_id + ":reminders",
+            result.operation_id + ":reminders",
+            input.id,
+            result.operation_id,
+            "core",
+            "reminder_validity",
+            JSON.stringify({ operation: result.operation_id }),
+            this.store.now(),
+            this.store.now(),
+            "applied",
+          );
+      } catch {
+        this.store.db
+          .prepare(
+            "INSERT OR IGNORE INTO events(id,dedupe_key,input_id,parent_id,source,kind,payload_json,created_at,status) VALUES(?,?,?,?,?,?,?,?,?)",
+          )
+          .run(
+            result.operation_id + ":reminders",
+            result.operation_id + ":reminders",
+            input.id,
+            result.operation_id,
+            "core",
+            "reminder_validity",
+            JSON.stringify({ operation: result.operation_id }),
+            this.store.now(),
+            "prepared",
+          );
+      }
       const nativeDates = new Set<string>();
       if (run && JSON.parse(run.metadata_json).agent_execution === "tools-v2") {
         const updated = new Set(result.updated_ids);
@@ -711,11 +890,21 @@ export class Core {
     });
   }
   flushProjections() {
-    const events = this.store.db
-      .prepare(
-        "SELECT * FROM events WHERE kind='diary_projection' AND status='prepared' ORDER BY rowid",
-      )
-      .all() as any[];
+    // Prepared work is always attempted; a conflict waits for its next retry
+    // window (bounded attempts) so a repaired template is picked up on restart.
+    const events = (
+      this.store.db
+        .prepare(
+          "SELECT * FROM events WHERE kind='diary_projection' AND status IN ('prepared','conflict') ORDER BY rowid",
+        )
+        .all() as any[]
+    ).filter((event) => {
+      if (event.status === "prepared") return true;
+      const payload = JSON.parse(event.payload_json ?? "{}");
+      return typeof payload.next_retry_at === "string" &&
+        payload.next_retry_at <= this.store.now() &&
+        Number(payload.attempts ?? 0) < 3;
+    });
     for (const event of events) {
       try {
         const ids = JSON.parse(event.payload_json).target_ids;
@@ -734,12 +923,161 @@ export class Core {
           )
           .run(this.store.now(), event.id);
       } catch {
+        const payload = JSON.parse(event.payload_json ?? "{}");
+        const attempts = Number(payload.attempts ?? 0) + 1;
         this.store.db
           .prepare(
-            "UPDATE events SET status='conflict',error_code='PROJECTION_CONFLICT' WHERE id=?",
+            "UPDATE events SET status='conflict',error_code='PROJECTION_CONFLICT',payload_json=? WHERE id=?",
           )
-          .run(event.id);
+          .run(
+            JSON.stringify({
+              ...payload,
+              attempts,
+              next_retry_at: new Date(Date.parse(this.store.now()) + 5 * 60000).toISOString(),
+            }),
+            event.id,
+          );
       }
+    }
+  }
+  /** Retry for reminder invalidation recorded as a consumer. */
+  flushReminderValidity() {
+    const events = (
+      this.store.db
+        .prepare("SELECT * FROM events WHERE kind='reminder_validity' AND status IN ('prepared','conflict') ORDER BY rowid")
+        .all() as any[]
+    ).filter((event) => {
+      if (event.status === "prepared") return true;
+      const payload = JSON.parse(event.payload_json ?? "{}");
+      return typeof payload.next_retry_at === "string" &&
+        payload.next_retry_at <= this.store.now() &&
+        Number(payload.attempts ?? 0) < 3;
+    });
+    for (const event of events) {
+      try {
+        this.cancelInvalidContact();
+        this.store.db
+          .prepare("UPDATE events SET status='applied',completed_at=? WHERE id=?")
+          .run(this.store.now(), event.id);
+      } catch {
+        const payload = JSON.parse(event.payload_json ?? "{}");
+        this.store.db
+          .prepare("UPDATE events SET status='conflict',error_code='REMINDER_VALIDITY_FAILED',payload_json=? WHERE id=?")
+          .run(
+            JSON.stringify({
+              ...payload,
+              attempts: Number(payload.attempts ?? 0) + 1,
+              next_retry_at: new Date(Date.parse(this.store.now()) + 5 * 60000).toISOString(),
+            }),
+            event.id,
+          );
+      }
+    }
+  }
+  /** Work coordination confirmation/retry: a failed reconcile never blocks the commit. */
+  flushWorkReconcile() {
+    const events = (
+      this.store.db
+        .prepare("SELECT * FROM events WHERE kind='work_reconcile' AND status IN ('prepared','conflict') ORDER BY rowid")
+        .all() as any[]
+    ).filter((event) => {
+      if (event.status === "prepared") return true;
+      const payload = JSON.parse(event.payload_json ?? "{}");
+      return typeof payload.next_retry_at === "string" &&
+        payload.next_retry_at <= this.store.now() &&
+        Number(payload.attempts ?? 0) < 3;
+    });
+    for (const event of events) {
+      const payload = JSON.parse(event.payload_json ?? "{}");
+      try {
+        this.store.commit(
+          event.id + ":retry",
+          "core",
+          event.id,
+          (reg) => ({
+            ids: reconcileWork(this.store, reg, payload.operation ?? event.id, payload.source),
+            message: "工作协调已确认",
+          }),
+        );
+        this.store.db
+          .prepare("UPDATE events SET status='applied',completed_at=? WHERE id=?")
+          .run(this.store.now(), event.id);
+      } catch {
+        const attempts = Number(payload.attempts ?? 0) + 1;
+        this.store.db
+          .prepare("UPDATE events SET status='conflict',error_code='WORK_RECONCILE_FAILED',payload_json=? WHERE id=?")
+          .run(
+            JSON.stringify({
+              ...payload,
+              attempts,
+              next_retry_at: new Date(Date.parse(this.store.now()) + 5 * 60000).toISOString(),
+            }),
+            event.id,
+          );
+      }
+    }
+  }
+  /** Consumer for derived memory/state text; retries like other projections. */
+  flushMemoryDerivations() {
+    // Fold pending fact-usage marks in here: this point is between turns, so the
+    // facts file is safe to rewrite.
+    try {
+      applyFactUsage(
+        this.store,
+        () => readFacts(this.store),
+        (file) =>
+          atomicWrite(
+            this.store.files.resolve(".agent/context/facts.json", "internal"),
+            JSON.stringify(file, null, 1),
+          ),
+      );
+    } catch {
+      /* usage marks stay pending and are applied on a later pass */
+    }
+    const events = (
+      this.store.db
+        .prepare(
+          "SELECT * FROM events WHERE kind='memory_derivation' AND status IN ('prepared','conflict') ORDER BY rowid",
+        )
+        .all() as any[]
+    ).filter((event) => {
+      if (event.status === "prepared") return true;
+      const payload = JSON.parse(event.payload_json ?? "{}");
+      return typeof payload.next_retry_at === "string" &&
+        payload.next_retry_at <= this.store.now() &&
+        Number(payload.attempts ?? 0) < 3;
+    });
+    if (!events.length) return;
+    // One derived summary serves every pending event: a backlog (first start after
+    // an upgrade) must not rewrite the same file once per historical commit.
+    try {
+      this.rebuildSummary(true);
+      const now = this.store.now();
+      const apply = this.store.db.transaction(() => {
+        for (const event of events)
+          this.store.db
+            .prepare("UPDATE events SET status='applied',completed_at=? WHERE id=?")
+            .run(now, event.id);
+      });
+      apply();
+    } catch {
+      const now = this.store.now();
+      const fail = this.store.db.transaction(() => {
+        for (const event of events) {
+          const payload = JSON.parse(event.payload_json ?? "{}");
+          this.store.db
+            .prepare("UPDATE events SET status='conflict',error_code='MEMORY_CONFLICT',payload_json=? WHERE id=?")
+            .run(
+              JSON.stringify({
+                ...payload,
+                attempts: Number(payload.attempts ?? 0) + 1,
+                next_retry_at: new Date(Date.parse(now) + 5 * 60000).toISOString(),
+              }),
+              event.id,
+            );
+        }
+      });
+      fail();
     }
   }
   private flushPeriodProjections() {
@@ -769,11 +1107,21 @@ export class Core {
           );
       }
     }
-    for (const row of s.db
-      .prepare(
-        "SELECT id,payload_json FROM events WHERE kind='period_projection' AND status='prepared'",
-      )
-      .all() as any[]) {
+    // Same contract as other consumers: a conflict keeps a retry window instead of
+    // getting stuck forever, so a note edited mid-projection is picked up later.
+    for (const row of (
+      s.db
+        .prepare(
+          "SELECT id,status,payload_json FROM events WHERE kind='period_projection' AND status IN ('prepared','conflict') ORDER BY rowid",
+        )
+        .all() as any[]
+    ).filter((event) => {
+      if (event.status === "prepared") return true;
+      const payload = JSON.parse(event.payload_json ?? "{}");
+      return typeof payload.next_retry_at === "string" &&
+        payload.next_retry_at <= s.now() &&
+        Number(payload.attempts ?? 0) < 3;
+    })) {
       try {
         const p = JSON.parse(row.payload_json),
           raw = s.files.read(p.path),
@@ -793,11 +1141,19 @@ export class Core {
           )
           .run(s.now(), row.id);
       } catch {
+        const payload = JSON.parse(row.payload_json ?? "{}");
         s.db
           .prepare(
-            "UPDATE events SET status='conflict',error_code='PROJECTION_CONFLICT' WHERE id=?",
+            "UPDATE events SET status='conflict',error_code='PROJECTION_CONFLICT',payload_json=? WHERE id=?",
           )
-          .run(row.id);
+          .run(
+            JSON.stringify({
+              ...payload,
+              attempts: Number(payload.attempts ?? 0) + 1,
+              next_retry_at: new Date(Date.parse(s.now()) + 5 * 60000).toISOString(),
+            }),
+            row.id,
+          );
       }
     }
   }
@@ -815,8 +1171,14 @@ export class Core {
       const changedPlan = registry.plans.some(
         (p) => versions[p.id] !== undefined && versions[p.id] !== p.version,
       );
+      // A revocation after queueing invalidates the queued candidate, even when
+      // every formal object it names still looks current.
+      const revocationChanged =
+        typeof versions.revocation === "number" &&
+        versions.revocation !== this.store.revocationRevision();
       const invalid =
         changedPlan ||
+        revocationChanged ||
         refs.some((ref) => {
           if(ref.kind==="work") {
             const f=registry.followups?.find(f=>f.id===ref.id);
@@ -1264,9 +1626,12 @@ export class Core {
       .get() as { n: number };
     if (queued.n >= 10)
       throw new AppError("QUEUE_FULL", "还有事项正在处理，请稍后再交代", 429);
+    const seq = ((this.store.db
+      .prepare("SELECT COALESCE(MAX(seq),0) AS n FROM inbox WHERE channel<>'coordinator'")
+      .get() as { n: number }).n) + 1;
     this.store.db
       .prepare(
-        "INSERT INTO inbox(id,channel,actor_ref,external_id,body,metadata_json,received_at,occurred_at) VALUES(?,?,?,?,?,?,?,?)",
+        "INSERT INTO inbox(id,channel,actor_ref,external_id,body,metadata_json,received_at,occurred_at,seq) VALUES(?,?,?,?,?,?,?,?,?)",
       )
       .run(
         input.id,
@@ -1281,6 +1646,7 @@ export class Core {
         }),
         this.store.now(),
         input.occurred_at,
+        seq,
       );
     // Production Agent owns language understanding. Legacy API adapters retain
     // their old protocol, but no natural-language shortcut can pre-empt this loop.
@@ -1480,6 +1846,11 @@ export class Core {
     void this.processPending();
     return { id: input.id, duplicate: false };
   }
+  /** Completes outstanding revocation cleanup; pending work keeps the honest receipt. */
+  cleanupRevocations(targetIds?: string[]) {
+    return cleanupRevokedFragments(this.store, this.store.now(), targetIds);
+  }
+
   finishInput(input: Input, text: string) {
     this.store.db
       .prepare(
@@ -1514,12 +1885,19 @@ export class Core {
       .run(!native && chunks.length > 4 ? consumed : 0, input.id);
     if (!native && chunks.length > 4) page[3] += "\n\n内容较长，回复“继续”查看余下内容。";
     this.store.db.transaction(() => {
+      // The final answer supersedes an unsent progress note: never tell the user
+      // "still working" after the result is ready.
+      this.store.db
+        .prepare(
+          "UPDATE outbox SET status='cancelled',finished_at=?,updated_at=? WHERE status='pending' AND json_extract(metadata_json,'$.reply_group')=? AND json_extract(metadata_json,'$.purpose')='progress'",
+        )
+        .run(now, now, input.id);
       for (const [index, chunk] of page.entries()) {
         const body =
           !native && page.length > 1 ? `（${index + 1}/${page.length}）\n${chunk}` : chunk;
         this.store.db
           .prepare(
-            "INSERT OR IGNORE INTO outbox(id,channel,recipient_ref,dedupe_key,target_refs_json,source_versions_json,message_kind,body,content_hash,scheduled_at,expires_at,counts_as_proactive,created_at,updated_at) VALUES(?,?,?,?,?,?, 'receipt',?,?,?,?,0,?,?)",
+            "INSERT OR IGNORE INTO outbox(id,channel,recipient_ref,dedupe_key,target_refs_json,source_versions_json,metadata_json,message_kind,body,content_hash,scheduled_at,expires_at,counts_as_proactive,created_at,updated_at) VALUES(?,?,?,?,?,?,?, 'receipt',?,?,?,?,0,?,?)",
           )
           .run(
             id("out"),
@@ -1538,6 +1916,7 @@ export class Core {
               ).map((id: string) => ({ kind: "proposal", id })),
             ),
             native ? JSON.stringify({language: "llm"}) : "{}",
+            JSON.stringify({ reply_group: input.id, sequence: index + 1, purpose: "reply", total: page.length }),
             body,
             hash(body),
             now,
@@ -1548,6 +1927,65 @@ export class Core {
       }
     })();
   }
+  /** One bounded progress note per slow turn; ordering uses sequence 0. */
+  queueProgress(input: Input, body: string) {
+    const now = this.store.now();
+    const row = this.store.db
+      .prepare("SELECT metadata_json FROM inbox WHERE id=?")
+      .get(input.id) as { metadata_json: string } | undefined;
+    if (!row) return null;
+    const meta = JSON.parse(row.metadata_json);
+    if (meta.progress_queued) return null;
+    this.store.db
+      .prepare(
+        "INSERT OR IGNORE INTO outbox(id,channel,recipient_ref,dedupe_key,target_refs_json,source_versions_json,metadata_json,message_kind,body,content_hash,scheduled_at,expires_at,counts_as_proactive,created_at,updated_at) VALUES(?,?,?,?,?,?,?, 'system',?,?,?,?,0,?,?)",
+      )
+      .run(
+        id("out"),
+        "qq",
+        input.actor_ref,
+        input.id + ":progress",
+        "[]",
+        JSON.stringify({ revocation: this.store.revocationRevision() }),
+        JSON.stringify({ reply_group: input.id, sequence: 0, purpose: "progress", total: 0, wording: "status" }),
+        body,
+        hash(body),
+        now,
+        DateTime.fromISO(now).plus({ minutes: 10 }).toUTC().toISO()!,
+        now,
+        now,
+      );
+    this.store.db
+      .prepare("UPDATE inbox SET metadata_json=json_set(metadata_json,'$.progress_queued',json('true')) WHERE id=?")
+      .run(input.id);
+    return { queued: true };
+  }
+
+  /** Bounded record of a background planning gap, surfaced to the next turn. */
+  recordPlanningGap(message: string) {
+    const entry = { at: this.store.now(), message: message.slice(0, 200) };
+    this.store.updateRuntimeMeta((meta) => {
+      const history = Array.isArray(meta.planning_gaps) ? meta.planning_gaps : [];
+      return {
+        ...meta,
+        planning_gap: entry,
+        // Bounded: a repeated failure must not grow the record without limit.
+        planning_gaps: [...history, entry].slice(-3),
+      };
+    });
+    this.emit("planning_gap", { message: entry.message });
+  }
+
+  /** The user changed the constraints or the work moved on: the gap is stale. */
+  clearPlanningGap() {
+    const meta = this.store.runtimeMeta();
+    if (!meta.planning_gap) return;
+    this.store.updateRuntimeMeta((current) => {
+      const { planning_gap: _dropped, ...rest } = current;
+      return rest;
+    });
+  }
+
   context(input: Input) {
     const r = this.store.registry();
     let targetIds: string[] = [];
@@ -1613,6 +2051,21 @@ export class Core {
       input.channel === "coordinator" ? "planning" : "all",
     );
     const preferences = memory.selected;
+    const facts = searchFacts(this.store, input.text, this.store.now(), 8);
+    // Facts handed to the model are recorded once per event, so retention can
+    // tell "used" from "stored". This only touches SQLite: writing the truth file
+    // here would invalidate a commit the turn is preparing.
+    if (facts.items.length)
+      try {
+        recordFactUsage(
+          this.store,
+          facts.items.map((f: any) => f.id),
+          "ctx:" + input.id + ":" + this.store.snapshotRevision(),
+          this.store.now(),
+        );
+      } catch {
+        /* usage tracking is best effort; it must not block a turn */
+      }
     const context = {
       assistant: this.assistant.view(),
       work:(r.followups??[]).filter(f=>f.work && f.status!=="resolved").slice(-6),
@@ -1651,7 +2104,8 @@ export class Core {
         plans:
           r.plans.filter((x) => x.window_end >= this.store.now()).length > 20,
         controls: false,
-        proposals: false,
+        proposals:
+          r.proposals.filter((x) => x.status === "pending" && x.expires_at > this.store.now()).length > 10,
         preferences: memory.truncated,
         documents: false,
         assistant: false,
@@ -1675,9 +2129,14 @@ export class Core {
         .filter((x) => x.window_end >= this.store.now())
         .slice(0, 20),
       controls: r.controls.filter((x) => x.ends_at > this.store.now()),
-      proposals: r.proposals.filter(
-        (x) => x.status === "pending" && x.expires_at > this.store.now(),
-      ).sort((a,b)=>Number(shown.some(x=>x.proposal_id===b.id))-Number(shown.some(x=>x.proposal_id===a.id))||b.updated_at.localeCompare(a.updated_at)),
+      proposals: r.proposals
+        .filter((x) => x.status === "pending" && x.expires_at > this.store.now())
+        .sort((a, b) =>
+          Number(shown.some((x) => x.proposal_id === b.id)) -
+            Number(shown.some((x) => x.proposal_id === a.id)) ||
+          b.updated_at.localeCompare(a.updated_at),
+        )
+        .slice(0, 10),
       reply_target_ids: targetIds,
       reply_occurrences: input.reply_to
         ? (() => {
@@ -1708,6 +2167,32 @@ export class Core {
           })()
         : null,
       preferences,
+      facts: facts.items,
+      facts_truncated: facts.matched,
+      // What is still unread is authoritative: the model sees the contiguous
+      // understood watermark and the newer inputs it has not interpreted yet.
+      understood_seq: understoodSeq(this.store),
+      planning_gap: this.store.runtimeMeta().planning_gap ?? null,
+      recent_planning_gaps: this.store.runtimeMeta().planning_gaps ?? [],
+      uninterpreted_inputs: (
+        this.store.db
+          .prepare(
+            "SELECT seq,substr(body,1,80) AS excerpt FROM inbox WHERE channel=? AND actor_ref=? AND id<>? AND classification<>'classified' AND status IN ('pending','processing') ORDER BY seq",
+          )
+          .all(input.channel, input.actor_ref, input.id) as { seq: number; excerpt: string }[]
+      ).filter((row) => row.seq > 0),
+      delivered_display_sets: (
+        this.store.db
+          .prepare(
+            "SELECT id,metadata_json,processed_at FROM inbox WHERE json_extract(metadata_json,'$.delivered_display_set') IS NOT NULL ORDER BY rowid DESC LIMIT 3",
+          )
+          .all() as { id: string; metadata_json: string; processed_at: string }[]
+      ).map((row) => ({
+        input_id: row.id,
+        delivered_at: row.processed_at,
+        items: JSON.parse(row.metadata_json).delivered_display_set,
+      })),
+      facts_restricted: facts.restricted,
       recent_contacts: (
         this.store.db
           .prepare(
@@ -1842,6 +2327,80 @@ export class Core {
       }
     return context;
   }
+  /**
+   * C2 classification job: one bounded batch (<=20) of accepted-but-unread
+   * inputs, cut off at acceptance time. It runs beside the turn loop so a newer
+   * message stops holding older work without waiting for its own turn.
+   */
+  async classifyPending() {
+    const agent = this.agent;
+    if (!agent?.classify || this.stopping) return null;
+    // Understanding is background work: a degraded or draining runtime must not
+    // spend model budget on it (the gate stays fail-closed meanwhile).
+    if (!this.store.state.acceptsBackground()) return null;
+    const rows = this.store.db
+      .prepare(
+        "SELECT id,body,metadata_json,seq FROM inbox WHERE status='pending' AND channel<>'coordinator' AND classification='unclassified' AND body IS NOT NULL ORDER BY seq,rowid LIMIT 20",
+      )
+      .all() as { id: string; body: string; metadata_json: string; seq: number }[];
+    if (!rows.length) return null;
+    const cutoff = rows[rows.length - 1].seq;
+    const mark = this.store.db.prepare("UPDATE inbox SET classification=? WHERE id=?");
+    // At most two attempts per input: an unreadable message becomes an explicit
+    // needs_clarification responsibility instead of an endless retry loop.
+    const exhausted = rows.filter((row) => Number(JSON.parse(row.metadata_json).classify_attempts ?? 0) >= 2);
+    for (const row of exhausted) mark.run("needs_clarification", row.id);
+    const attemptRows = rows.filter((row) => !exhausted.includes(row));
+    if (!attemptRows.length) return { batch: rows.length, cutoff_seq: cutoff, published: 0, exhausted: exhausted.length };
+    rows.length = 0;
+    rows.push(...attemptRows);
+    for (const row of rows) {
+      const meta = JSON.parse(row.metadata_json);
+      this.store.db
+        .prepare("UPDATE inbox SET metadata_json=json_set(metadata_json,'$.classify_attempts',?) WHERE id=?")
+        .run(Number(meta.classify_attempts ?? 0) + 1, row.id);
+    }
+    for (const row of rows) mark.run("classifying", row.id);
+    const retry = (status: string) => {
+      for (const row of rows) {
+        const live = this.store.db.prepare("SELECT classification FROM inbox WHERE id=?").get(row.id) as any;
+        if (live?.classification === "classifying") mark.run(status, row.id);
+      }
+    };
+    let outcome;
+    try {
+      outcome = await withDeadline("classify", 30_000, () =>
+        agent.classify!(rows.map((row) => ({ id: row.id, text: row.body, occurred_at: this.store.now() }))),
+      );
+    } catch {
+      // Fail closed and keep a recoverable responsibility instead of guessing.
+      retry("needs_clarification");
+      return { batch: rows.length, cutoff_seq: cutoff, published: 0, failed: rows.length };
+    }
+    if (outcome === null) {
+      // The adapter does not offer classification yet: leave the rows unread so
+      // the gate keeps its fail-closed behaviour instead of inventing a result.
+      retry("unclassified");
+      return { batch: rows.length, cutoff_seq: cutoff, published: 0, unsupported: true };
+    }
+    let published = 0;
+    for (const item of outcome.items ?? []) {
+      const row = rows.find((candidate) => candidate.id === item.input_id);
+      if (!row) continue;
+      try {
+        const interpretation = validateInterpretation(item.interpretation, row.body);
+        const payloadHash = JSON.parse(row.metadata_json).payload_hash as string | undefined;
+        publishInterpretation(this.store, row.id, interpretation, payloadHash ?? "");
+        published++;
+      } catch {
+        mark.run("needs_clarification", row.id);
+      }
+    }
+    // Nothing published for a row means the model could not be trusted here.
+    retry("needs_clarification");
+    return { batch: rows.length, cutoff_seq: cutoff, published, failed: rows.length - published };
+  }
+
   async processPending() {
     if (!this.agent || this.stopping) return;
     // An expired lease is taken over instead of waiting for a dead holder. Its

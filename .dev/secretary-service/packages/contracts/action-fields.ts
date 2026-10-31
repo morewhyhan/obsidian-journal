@@ -3,7 +3,7 @@ import { AppError, type Action } from "./types.js";
 const target="target_id expected_version";
 const habit="title min_behavior minimum_quantity optional_target status note_refs recurrence anchor reminder_mode";
 const task="title outcome acceptance due_at verification status parent_task_id supporting_habit_ids note_refs planning";
-const automation="title kind timezone due_at delay_seconds schedule body to_diary strict";
+const automation="title kind timezone due_at delay_seconds schedule body to_diary strict quiet_exception";
 const window="kind window_start window_end available_windows duration_minutes next_action";
 // Shared by the published tool schema and the application boundary. A field
 // valid for one command must not be silently ignored by another command.
@@ -16,7 +16,7 @@ export const actionFields: Record<string,string[]> = Object.fromEntries(Object.e
   complete_task:target+" report performed_at business_date", reopen_task:target+" report performed_at business_date",
   schedule:target+" "+window+" allow_reflow overdue_recovery business_date", reschedule:target+" "+window+" overdue_recovery",
   pause_contact:"target_id ends_at", resume_contact:"target_id", cancel_item:target,
-  remember_fact:"fact kind", link_diary:target+" path label", project_diary:target,
+  remember_fact:"fact kind fact_subject fact_scope valid_until supersedes", forget_fact:target, link_diary:target+" path label", project_diary:target,
   set_personal_rule:"key value starts_at ends_at expected_rules_revision",
   control_rule:target+" enabled kind expected_rules_revision", undo_rule:target+" expected_rules_revision",
   create_automation:automation, update_automation:target+" "+automation,

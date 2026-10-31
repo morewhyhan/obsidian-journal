@@ -3,6 +3,9 @@ import type { Input } from "../../packages/contracts/types.js";
 import { AppError } from "../../packages/contracts/types.js";
 import {AGENT_TOOLS} from "../../packages/contracts/agent-tools.js";
 import {hash} from "./files.js";
+
+/** Warm-up after a bridge restart is slower than a steady-state turn. */
+export const SELF_TEST_TIMEOUT_MS = 45000;
 function valid(result: any): result is AgentResult {
   return (
     result &&
@@ -51,7 +54,10 @@ export class AstrBotClient implements AgentAdapter {
     this.shutdown.abort();
   }
   async interpret(input: Input, context: unknown): Promise<AgentResult> {
-    const timeout = input.id === "model-self-test" ? 30000 : input.channel==="coordinator"?Math.min(60000,this.timeoutMs):this.timeoutMs;
+    // The first model call after a bridge restart can outlast the ordinary
+    // self-test window; a false failure there mutes the assistant for a retry
+    // cycle, so the probe gets a longer leash than a normal turn.
+    const timeout = input.id === "model-self-test" ? SELF_TEST_TIMEOUT_MS : input.channel==="coordinator"?Math.min(60000,this.timeoutMs):this.timeoutMs;
     const signal = AbortSignal.any([
       this.shutdown.signal,
       AbortSignal.timeout(timeout),
@@ -104,6 +110,34 @@ export class AstrBotClient implements AgentAdapter {
       "理解服务返回了无效结构，未重放请求；已执行操作以回执为准",
       503,
     );
+  }
+  /**
+   * C2 understanding for accepted-but-unread inputs. A bridge that does not offer
+   * the route yet returns null: the gate then stays fail-closed exactly as before.
+   */
+  async classify(inputs: { id: string; text: string; occurred_at: string }[]) {
+    const response = await fetch(this.url + "/classify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + this.token },
+      body: JSON.stringify({ inputs, limits: { timeout_ms: this.timeoutMs } }),
+      signal: AbortSignal.any([this.shutdown.signal, AbortSignal.timeout(this.timeoutMs)]),
+    });
+    if (response.status === 404) return null;
+    if (!response.ok) throw new AppError("AGENT_UNAVAILABLE", "理解服务暂时不可用，未发布分类结果", 503);
+    const body = (await response.json().catch(() => null)) as { items?: unknown } | null;
+    const items = Array.isArray(body?.items) ? body!.items : null;
+    if (!items) throw new AppError("AGENT_INVALID", "分类结果结构无效", 503);
+    const known = new Set(inputs.map((input) => input.id));
+    const parsed: { input_id: string; interpretation: unknown }[] = [];
+    for (const item of items as { input_id?: unknown; interpretation?: unknown }[]) {
+      // Unknown ids are dropped; a known id with no interpretation is a real defect.
+      if (typeof item?.input_id !== "string" || !known.has(item.input_id)) continue;
+      if (item.interpretation === undefined)
+        throw new AppError("AGENT_INVALID", "分类结果缺少解释", 503);
+      if (parsed.some((entry) => entry.input_id === item.input_id)) continue;
+      parsed.push({ input_id: item.input_id, interpretation: item.interpretation });
+    }
+    return { items: parsed };
   }
   async check() {
     const health = await fetch(this.url + "/healthz", {

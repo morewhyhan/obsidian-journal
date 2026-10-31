@@ -55,10 +55,8 @@ Daily中的`YYYY年`是空白目录展示样例，每周展示多篇日记的位
 
 笔记模板可独立使用。QQ助理需要单独部署服务、配置模型和账号，并完成机器人登录。
 
-- [助理介绍](.agent/Research/README.md)：能解决哪些具体问题，怎样使用。
-- [PRD](.agent/Research/PRD.md)：功能、流程、边界和验收标准。
-- [架构图册](.agent/Research/Architecture-Atlas.md)：总览与八个视角，直观看设计怎样工作。
-- [工程架构](.agent/Research/ARCHITECTURE.md)：实施基线与目标要求。
-- [DDD](.agent/Research/DDD.md)：当前实现、已取得证据与部署维护；不把目标设计当作已实现。
+- [助理介绍](.agent/Research/README.md)：产品作用与使用范围。
+- [工程架构](.agent/Research/ARCHITECTURE.md)：唯一设计基准、开发顺序与验收要求。
+- [设计决策](.agent/Research/DECISIONS.md)：为什么这样选择、比较过什么，以及问题怎样推动设计变化。
 
 `.agent`放助理配置和设计资料，`.dev`放服务源码；日常记录集中在上面的三个目录。模板不包含私人日记、账号或密钥。

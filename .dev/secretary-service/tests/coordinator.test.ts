@@ -177,9 +177,15 @@ it("an explicit overrun repairs only the dependent chain and preserves a fixed m
   expect(r.plans.find((x) => x.target_ref.id === a)!.window_end).toBe(
     "2026-10-24T03:20:00.000Z",
   );
-  expect(r.plans.find((x) => x.target_ref.id === b)!.window_start).toBe(
-    "2026-10-24T03:20:00.000Z",
-  );
+  // The 15-minute reserve ends at 11:45, so a 30-minute dependent block cannot
+  // start at 11:20; it moves to the next free window instead of eating the reserve.
+  const dependent = r.plans.find((x) => x.target_ref.id === b)!;
+  // The reserve is 11:45-12:00 local: no automatic block may overlap it.
+  const reserveStart = Date.parse("2026-10-24T03:45:00Z");
+  const reserveEnd = Date.parse("2026-10-24T04:00:00Z");
+  expect(Date.parse(dependent.window_start) < reserveEnd &&
+    Date.parse(dependent.window_end) > reserveStart).toBe(false);
+  expect(dependent.window_start).toBe("2026-10-24T07:00:00.000Z");
   expect(r.plans.find((x) => x.target_ref.id === meeting)!.window_start).toBe(
     "2026-10-24T06:00:00.000Z",
   );
@@ -188,6 +194,81 @@ it("an explicit overrun repairs only the dependent chain and preserves a fixed m
     "2026-10-26T10:00:00.000Z",
   );
 });
+it("C4 a declared wake condition re-opens waiting work when its reference changes", async () => {
+  const { h } = setup("2026-10-24T01:00:00Z");
+  await availability(h);
+  const target = await task(h, "报告");
+  await h.run({
+    type: "save_work",
+    work: {
+      key: "watch-report",
+      summary: "等报告改完再准备下一步",
+      owner: "assistant",
+      next_action: "核对报告版本",
+      check_at: "2026-10-30T02:00:00Z",
+      refs: [{ kind: "task", id: target, role: "subject" }],
+      wake_on: [{ kind: "ref_changed", ref: { kind: "task", id: target, role: "subject" } }],
+    },
+  } as any);
+  const follow = () => h.store.registry().followups!.find((f) => f.work?.key === "watch-report")!;
+  const saved = follow();
+  expect(saved.work?.wake_versions?.[target]).toBe(1);
+  expect(Date.parse(saved.next_check_at!)).toBe(Date.parse("2026-10-30T02:00:00Z"));
+
+  // Nothing moved yet: the waiting work keeps its original check time.
+  const other = await task(h, "无关", 30);
+  await h.run({ type: "configure_task", target_id: other, planning: { next_action: "照旧" } } as any);
+  expect(Date.parse(follow().next_check_at!)).toBe(Date.parse("2026-10-30T02:00:00Z"));
+
+  // The referenced task changes (its planning block), so the wake condition fires.
+  await h.run({
+    type: "configure_task",
+    target_id: target,
+    planning: { next_action: "先写结论" },
+  } as any);
+  const woken = follow();
+  expect(woken.work?.wake_versions?.[target]).toBe(2);
+  expect(woken.next_check_at).toBe(h.store.now());
+  expect(woken.work?.last_wake?.evidence.join(" ")).toContain("changed:" + target);
+  // Still the assistant's responsibility, not the user's achievement.
+  expect(woken.status).toBe("open");
+});
+
+it("C4 a feedback wake fires only when the user actually reports on the watched object", async () => {
+  const { h } = setup("2026-10-24T01:00:00Z");
+  await availability(h);
+  const watched = await task(h, "报告"),
+    other = await task(h, "图表", 30);
+  await h.run({
+    type: "save_work",
+    work: {
+      key: "watch-feedback",
+      summary: "等用户反馈再准备下一步",
+      owner: "assistant",
+      next_action: "根据反馈调整准备",
+      check_at: "2026-10-30T02:00:00Z",
+      refs: [{ kind: "task", id: watched, role: "subject" }],
+      wake_on: [
+        { kind: "matching_feedback", ref: { kind: "task", id: watched, role: "subject" } },
+      ],
+    },
+  } as any);
+  const follow = () => h.store.registry().followups!.find((f) => f.work?.key === "watch-feedback")!;
+  const checkAt = Date.parse("2026-10-30T02:00:00Z");
+  expect(Date.parse(follow().next_check_at!)).toBe(checkAt);
+
+  // Feedback about a different task does not wake this responsibility.
+  await h.run({ type: "report_execution", target_id: other, execution: "not_started" } as any);
+  expect(Date.parse(follow().next_check_at!)).toBe(checkAt);
+
+  // Reporting on the watched task does.
+  await h.run({ type: "report_execution", target_id: watched, execution: "not_started" } as any);
+  const woken = follow();
+  expect(woken.next_check_at).toBe(h.store.now());
+  expect(woken.work?.last_wake?.evidence).toContain("feedback:" + watched);
+  expect(woken.status).toBe("open");
+});
+
 it("a fixed conflict asks for a choice, preserves the original promise and suppresses misleading reminders", async () => {
   const { h, sent, scheduler } = setup("2026-10-24T01:00:00Z");
   await availability(h);
@@ -876,4 +957,53 @@ it("QQ intake, real planning tool, night scheduling, proactive reminder and quot
   expect(h.store.files.read(route("daily", "2026-10-24"))).toContain(
     "- [x] 10:00—10:30 QQ报告 · 先列三个小标题",
   );
+});
+
+it("progress reports never spend the day's reserve, and an explicit zero reserve releases it", async () => {
+  const scenario = async (bufferMinutes: number) => {
+    const h = harness("2026-10-24T02:00:00Z"); // 10:00 +08
+    cleanups.push(() => h.close());
+    await h.run({
+      type: "set_planning",
+      preferences: {
+        availability: [{ weekdays: [1, 2, 3, 4, 5, 6, 7], start: "10:00", end: "12:00" }],
+        buffer_minutes: bufferMinutes,
+      },
+    } as any);
+    const report = await h.run({
+      type: "create_task",
+      title: "report",
+      outcome: "deliver",
+      acceptance: [{ kind: "check", description: "deliver" }],
+      due_at: "2026-10-24T06:00:00Z",
+      planning: { next_action: "write", remaining_minutes: 60 },
+    } as any);
+    const chart = await h.run({
+      type: "create_task",
+      title: "chart",
+      outcome: "deliver",
+      acceptance: [{ kind: "check", description: "deliver" }],
+      due_at: "2026-10-24T06:00:00Z",
+      planning: { next_action: "write", remaining_minutes: 30 },
+    } as any);
+    await h.run({ type: "configure_task", target_id: chart.updated_ids[0], planning: { depends_on: [report.updated_ids[0]] } } as any);
+    await h.run({ type: "schedule", target_id: report.updated_ids[0], window_start: "2026-10-24T02:00:00Z", window_end: "2026-10-24T03:00:00Z", duration_minutes: 60, next_action: "write", kind: "window" } as any);
+    await h.run({ type: "schedule", target_id: chart.updated_ids[0], window_start: "2026-10-24T03:00:00Z", window_end: "2026-10-24T03:30:00Z", duration_minutes: 30, next_action: "write", kind: "window" } as any);
+    h.setTime("2026-10-24T02:50:00Z");
+    await h.run({ type: "report_execution", target_id: report.updated_ids[0], execution: "progress", remaining_minutes: 30 } as any);
+    const registry = h.store.registry();
+    const chartPlan = registry.plans.find((x) => x.target_ref.id === chart.updated_ids[0])!;
+    const task = registry.tasks.find((x) => x.id === report.updated_ids[0])!;
+    return { chartPlan, remaining: (task.planning as any).remaining_minutes };
+  };
+
+  // Default reserve (15 min until 11:45): the dependent block must not land after it.
+  const guarded = await scenario(15);
+  expect(guarded.remaining).toBe(30); // the reported fact is kept
+  expect(Date.parse(guarded.chartPlan.window_end)).toBeLessThanOrEqual(Date.parse("2026-10-24T03:45:00Z"));
+
+  // With an explicit zero reserve the same reflow may use the full window.
+  const released = await scenario(0);
+  expect(released.remaining).toBe(30);
+  expect(Date.parse(released.chartPlan.window_end)).toBeLessThanOrEqual(Date.parse("2026-10-24T04:00:00Z"));
 });

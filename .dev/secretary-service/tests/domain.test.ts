@@ -5,6 +5,7 @@ import { harness, habitAction, taskAction } from "./helpers.js";
 import { route, context } from "../packages/calendar/index.js";
 import { renderTemplate } from "../apps/core/journal.js";
 import { cleanup } from "../apps/core/maintenance.js";
+import { bufferMinutesFor, reflow } from "../packages/domain/planning.js";
 const cleanups: (() => Promise<void>)[] = [];
 const setup = () => {
   const h = harness();
@@ -13,6 +14,72 @@ const setup = () => {
 };
 afterEach(async () => {
   for (const close of cleanups.splice(0)) await close();
+});
+describe("S3f one day's reserve can be lowered without restating availability", () => {
+  it("S3f a day override with only buffer_minutes is accepted and used", async () => {
+    const h = setup();
+    await h.run({
+      type: "set_planning",
+      preferences: {
+        availability: [{ weekdays: [1, 2, 3, 4, 5, 6, 7], start: "10:00", end: "12:00" }],
+        buffer_minutes: 15,
+        day_overrides: [{ date: "2026-10-24", buffer_minutes: 0 }],
+      },
+    } as any);
+    const registry = h.store.registry() as any;
+    const stored = registry.planning_preferences.day_overrides[0];
+    expect(stored).toMatchObject({ date: "2026-10-24", buffer_minutes: 0 });
+    const settings = registry.planning_preferences as any;
+    expect(bufferMinutesFor(settings, "2026-10-24")).toBe(0);
+    // Other days keep the default reserve.
+    expect(bufferMinutesFor(settings, "2026-10-23")).toBe(15);
+  });
+});
+
+describe("S3b automatic reflow protects the day's reserve", () => {
+  it("S3b a background repair refuses a slot inside the reserve while an explicit one may use it", async () => {
+    const h = setup();
+    await h.run({
+      type: "set_planning",
+      preferences: {
+        availability: [{ weekdays: [1, 2, 3, 4, 5, 6, 7], start: "10:00", end: "12:00" }],
+        buffer_minutes: 15,
+      },
+    } as any);
+    const first = await h.run(taskAction);
+    const second = await h.run({ ...taskAction, title: "第二件" } as any);
+    // 10:00–11:00 and 11:00–11:30 leave only 11:30–11:45 usable before the reserve.
+    await h.run({
+      type: "schedule", target_id: first.updated_ids[0],
+      window_start: "2026-10-23T02:00:00Z", window_end: "2026-10-23T03:00:00Z", duration_minutes: 60, next_action: "先写结论",
+    } as any);
+    await h.run({
+      type: "schedule", target_id: second.updated_ids[0],
+      window_start: "2026-10-23T03:00:00Z", window_end: "2026-10-23T03:30:00Z", duration_minutes: 30, next_action: "画图",
+    } as any);
+    h.setTime("2026-10-23T02:50:00Z");
+    const registry = h.store.registry();
+    const root = registry.plans.find((p) => p.target_ref.id === first.updated_ids[0])!;
+    const settings = (registry as any).planning_preferences ?? h.store.config.planning;
+    // The explicit repair may squeeze the 30 minutes into 11:20–11:50.
+    const explicit = reflow(registry, root.id, "2026-10-23T02:00:00Z", "2026-10-23T03:20:00Z",
+      h.store.now(), settings, h.store.config.timezone, "explicit", false);
+    const squeezed = registry.plans.find((p) => p.target_ref.id === second.updated_ids[0])!;
+    expect(Date.parse(squeezed.window_start)).toBeLessThan(Date.parse("2026-10-23T03:45:00Z"));
+    expect(explicit.length).toBeGreaterThan(0);
+
+    // A background repair moves the work instead of placing it inside the reserve.
+    const copy = h.store.registry();
+    const root2 = copy.plans.find((p) => p.target_ref.id === first.updated_ids[0])!;
+    reflow(copy, root2.id, "2026-10-23T02:00:00Z", "2026-10-23T03:20:00Z",
+      h.store.now(), settings, h.store.config.timezone, "background", true);
+    const moved = copy.plans.find((p) => p.target_ref.id === second.updated_ids[0])!;
+    const insideReserve =
+      moved.window_start === "2026-10-23T03:20:00.000Z" ||
+      (Date.parse(moved.window_start) < Date.parse("2026-10-23T04:00:00Z") &&
+        Date.parse(moved.window_end) > Date.parse("2026-10-23T03:45:00Z"));
+    expect(insideReserve).toBe(false);
+  });
 });
 describe("P01–P09 habits and tasks", () => {
   it("P01 starts without subscribed examples or user-management folders", () => {
@@ -232,8 +299,13 @@ describe("S01/D04/D05/D06 durability", () => {
       fact: "日常提醒保持简短。",
       kind: "user_confirmed",
     });
-    const p = path.join(h.root, ".agent/context/user.md");
-    expect(fs.readFileSync(p, "utf8")).toContain("日常提醒保持简短。");
+    const p = path.join(h.root, ".agent/context/facts.json");
+    const first = JSON.parse(fs.readFileSync(p, "utf8"));
+    expect(first.schema_version).toBe(1);
+    expect(first.facts.map((f: any) => f.content)).toContain("日常提醒保持简短。");
+    expect(first.facts[0].source.kind).toBe("input");
+    expect(first.facts[0].source.id).toBeTruthy();
+    expect(first.facts[0].status).toBe("active");
     await h.run({
       type: "remember_fact",
       fact: "我更喜欢晚上学习。",
@@ -246,6 +318,7 @@ describe("S01/D04/D05/D06 durability", () => {
       .get() as any;
     expect(events.payload_json).toContain("晚上学习");
     expect(events.payload_json).not.toContain("日常提醒保持简短。");
+    expect(fs.existsSync(path.join(h.root, ".agent/context/user.md"))).toBe(false);
     await expect(
       h.run({ type: "remember_fact", fact: "用户在逃避", kind: "hypothesis" }),
     ).rejects.toMatchObject({ code: "FACT_NOT_CONFIRMED" });

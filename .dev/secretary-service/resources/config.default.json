@@ -11,7 +11,7 @@
     "write_owner": "secretary-core"
   },
   "agent": {
-    "budget": {"request_input_tokens":16384,"request_output_tokens":4096,"daily_requests":120,"daily_tokens":500000},
+    "budget": {"request_input_tokens":65536,"request_output_tokens":4096,"daily_requests":120,"daily_tokens":500000},
     "provider": "astrbot",
     "integration": "astrbot_plugin",
     "session_storage": "memory",

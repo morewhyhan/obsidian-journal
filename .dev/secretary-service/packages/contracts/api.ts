@@ -147,10 +147,16 @@ const planningPreferences = object(
     day_overrides: {
       type: "array",
       maxItems: 62,
-      items: object({
-        date,
-        windows: { type: "array", maxItems: 32, items: localWindow },
-      }),
+      // windows is optional: lowering one day's reserve should not require
+      // restating that day's availability.
+      items: object(
+        {
+          date,
+          windows: { type: "array", maxItems: 32, items: localWindow },
+          buffer_minutes: { type: ["integer", "null"], minimum: 0, maximum: 120 },
+        },
+        ["date"],
+      ),
     },
     buffer_minutes: { type: "integer", minimum: 0, maximum: 120 },
     max_task_minutes: { type: "integer", minimum: 1, maximum: 960 },
@@ -195,6 +201,7 @@ const types = [
   "resume_contact",
   "cancel_item",
   "remember_fact",
+  "forget_fact",
   "link_diary",
   "project_diary",
 ];
@@ -208,6 +215,10 @@ export const actionSchema = {
       reminder_mode: { enum: ["window", "opportunistic", "off"] },
       starts_at: time,
       performed_at: { ...nullable(time), description: "行为/任务反馈的实际发生时刻，带时区；business_date为所属日期。报告时间由Core另记；未知不猜。" },
+      fact_subject: string(200),
+      fact_scope: { type: "array", maxItems: 8, minItems: 1, uniqueItems: true, items: string(60) },
+      valid_until: nullable(time),
+      supersedes: nullable(string(100)),
       expected_rules_revision: { type: "integer", minimum: 0 },
       timezone: string(80),
       delay_seconds: { type: "integer", minimum: 1, maximum: 2678400 },

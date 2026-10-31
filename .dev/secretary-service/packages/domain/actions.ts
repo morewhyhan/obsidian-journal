@@ -17,6 +17,7 @@ import {
   CRITERION_STATUSES,
 } from "../contracts/types.js";
 import { id } from "../shared/identity.js";
+import type { FactDraft } from "../contracts/facts.js";
 import { workAction } from "./work.js";
 import { day } from "../calendar/index.js";
 import { earliestSlot } from "./scheduling.js";
@@ -30,6 +31,7 @@ import {
   planningSettings,
   taskPlanning,
   validatePlanningSettings,
+  bufferMinutesFor,
   reflow,
 } from "./planning.js";
 type Context = {
@@ -40,10 +42,22 @@ type Context = {
   loadDay: (date: string) => Day;
   userAuthorized: boolean;
   verified?: Map<string, Source>;
-  rememberFact?: (fact: string) => void;
+  rememberFact?: (fact: string, meta?: Omit<FactDraft, "content">) => void;
+  forgetFact?: (targetId: string, expectedVersion: number) => unknown;
   validateNoteRef?: (path: string) => void;
   planningDefaults?: PlanningSettings;
 };
+/** Reserve for the date of the first supplied window; unknown availability keeps the caller's windows. */
+function slotReserve(registry: Registry, c: Context, windows: unknown) {
+  if (!c.planningDefaults || !Array.isArray(windows) || !windows.length) return 0;
+  const first = windows[0] as { start?: unknown };
+  if (typeof first?.start !== "string") return 0;
+  const at = DateTime.fromISO(first.start, { setZone: true });
+  const date = at.isValid ? at.setZone(c.zone).toISODate() : null;
+  return date
+    ? bufferMinutesFor(planningSettings(registry, c.planningDefaults, c.now), date)
+    : 0;
+}
 export const verificationKey = (
   taskId: string,
   criterion: {
@@ -1027,7 +1041,8 @@ export function applyActions(
           slot =
             a.available_windows === undefined
               ? null
-              : earliestSlot(registry, a.available_windows, duration, c.now);
+              : earliestSlot(registry, a.available_windows, duration, c.now, undefined,
+                  slotReserve(registry, c, a.available_windows));
         const start = timestamp(slot?.start ?? a.window_start),
           end = timestamp(slot?.end ?? a.window_end);
         const overdue=allowDeadline(registry.tasks.find(t=>t.id===target.id),end,a,c);
@@ -1097,6 +1112,8 @@ export function applyActions(
             registry.planning_preferences ?? c.planningDefaults,
             c.zone,
             c.operation,
+            // A background-initiated repair protects the day's reserve.
+            c.source?.channel === "coordinator",
           );
           ids.push(...changed);
         }
@@ -1153,6 +1170,7 @@ export function applyActions(
                 duration,
                 c.now,
                 p.id,
+                slotReserve(registry, c, a.available_windows),
               );
         const start = timestamp(slot?.start ?? a.window_start),
           end = timestamp(slot?.end ?? a.window_end);
@@ -1263,7 +1281,29 @@ export function applyActions(
           throw new AppError("FACT_NOT_CONFIRMED", "推测不写入稳定偏好");
         if (!c.rememberFact)
           throw new AppError("FACT_UNAVAILABLE", "偏好记录当前不可用");
-        c.rememberFact(text(a.fact, "明确偏好", 500));
+        const scope = a.fact_scope === undefined
+          ? undefined
+          : Array.isArray(a.fact_scope) && a.fact_scope.length && a.fact_scope.length <= 8
+            ? a.fact_scope.map((item) => text(item, "适用范围", 60))
+            : null;
+        if (scope === null) throw new AppError("INVALID_FACT", "适用范围需要1到8个短标签");
+        c.rememberFact(text(a.fact, "明确偏好", 500), {
+          kind: "user_reported",
+          ...(a.fact_subject === undefined ? {} : { subject: text(a.fact_subject, "事实主体", 200) }),
+          ...(scope === undefined ? {} : { scope }),
+          ...(typeof a.valid_until === "string" ? { valid_until: timestamp(a.valid_until) } : {}),
+          ...(typeof a.supersedes === "string" ? { supersedes: text(a.supersedes, "事实标识", 100) } : {}),
+        });
+        break;
+      }
+      case "forget_fact": {
+        accept(c);
+        if (!c.forgetFact)
+          throw new AppError("FACT_UNAVAILABLE", "记忆撤销当前不可用");
+        const targetId = text(a.target_id, "事实标识", 120);
+        if (!Number.isInteger(a.expected_version) || Number(a.expected_version) < 1)
+          throw new AppError("INVALID_VERSION", "撤销事实需要当前版本");
+        c.forgetFact(targetId, Number(a.expected_version));
         break;
       }
       case "unlink_diary": {

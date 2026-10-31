@@ -49,6 +49,8 @@ function defaults() {
       habit_follow_up_requires_recent_engagement: boolean;
       delivery_retry_cap: number;
       delivery_retry_delays_seconds: number[];
+      /** One progress note is offered once a foreground turn runs this long. */
+      progress_after_seconds?: number;
     };
     retention: {
       outbox_body_days: number;
@@ -220,6 +222,9 @@ export function validateProductionSettings(settings: {
   const invalid = (message: string): never => {
     throw new AppError("CONFIG_INVALID", message, 500);
   };
+  // A QQ-only deployment can run without the Web login; the HTTP surface then
+  // refuses every web session instead of accepting a weak/empty password.
+  const webDisabled = settings.env.SECRETARY_WEB_ENABLED === "0";
   const parse = (value: string) => {
     try {
       return new URL(value);
@@ -228,20 +233,23 @@ export function validateProductionSettings(settings: {
     }
   };
   if (
-    Buffer.byteLength(settings.sessionKey) < 32 ||
-    !/^scrypt\$[a-f0-9]{32}\$[a-f0-9]{128}$/.test(settings.passwordHash)
+    !webDisabled &&
+    (Buffer.byteLength(settings.sessionKey) < 32 ||
+      !/^scrypt\$[a-f0-9]{32}\$[a-f0-9]{128}$/.test(settings.passwordHash))
   )
     invalid("生产登录配置需要密码哈希和至少32字节的独立会话密钥");
-  const origin = parse(settings.origin ?? "http://localhost");
-  if (
-    origin.protocol !== "https:" ||
-    origin.username ||
-    origin.password ||
-    origin.pathname !== "/" ||
-    origin.search ||
-    origin.hash
-  )
-    invalid("生产公开入口需要明确的 HTTPS Origin");
+  if (!webDisabled) {
+    const origin = parse(settings.origin ?? "http://localhost");
+    if (
+      origin.protocol !== "https:" ||
+      origin.username ||
+      origin.password ||
+      origin.pathname !== "/" ||
+      origin.search ||
+      origin.hash
+    )
+      invalid("生产公开入口需要明确的 HTTPS Origin");
+  }
   if (settings.env.SECRETARY_ASTRBOT_URL) {
     const astrbot = parse(settings.env.SECRETARY_ASTRBOT_URL);
     if (

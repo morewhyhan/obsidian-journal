@@ -22,6 +22,8 @@ async function repo(root: string) {
   atomicWrite(path.join(root, "01. Daily/2026年/日记.md"), "日记");
   atomicWrite(path.join(root, "Attachment/a.txt"), "附件");
   atomicWrite(path.join(root, ".agent/state/registry.json"), "{}");
+  for (const name of ["README.md", "ARCHITECTURE.md", "DECISIONS.md"])
+    atomicWrite(path.join(root, ".agent/Research", name), "fixture documentation");
   atomicWrite(path.join(root, ".agent/data/secret.sqlite"), "excluded");
   atomicWrite(path.join(root, ".env"), "excluded-secret");
   atomicWrite(path.join(root, "我的新目录/说明.md"), "新目录也必须备份");
@@ -50,6 +52,8 @@ it("B02 local bare-remote fixture includes diary, attachment and state, but neve
   expect(names).toContain("Attachment/a.txt");
   expect(names).toContain("我的新目录/说明.md");
   expect(names).toContain(".agent/state/registry.json");
+  for (const name of ["README.md", "ARCHITECTURE.md", "DECISIONS.md"])
+    expect(names).toContain(".agent/Research/" + name);
   expect(names.join("\n")).not.toContain("secret.sqlite");
   expect(names).not.toContain(".env");
   expect(worker.lastPush).not.toBeNull();

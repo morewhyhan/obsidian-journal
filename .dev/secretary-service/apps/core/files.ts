@@ -30,6 +30,18 @@ export function atomicWrite(file: string, content: string | Buffer) {
     if (fs.existsSync(temp)) fs.unlinkSync(temp);
   }
 }
+/** Resolves symlinks and Windows junctions; denies a path that cannot be resolved. */
+function canonicalPath(target: string) {
+  let real: string;
+  try {
+    real = fs.realpathSync.native(target);
+  } catch {
+    throw new AppError("PATH_FORBIDDEN", "不允许符号链接或无法解析的路径", 403);
+  }
+  // GetFinalPathNameByHandle can return an extended-length prefix.
+  if (process.platform === "win32" && real.startsWith("\\\\?\\")) real = real.slice(4);
+  return real;
+}
 export function serialize(value: unknown) {
   return JSON.stringify(value, null, 2) + "\n";
 }
@@ -47,7 +59,9 @@ export class VaultFiles {
   writerGuard?: () => boolean;
   constructor(root: string) {
     fs.mkdirSync(root, { recursive: true });
-    this.root = fs.realpathSync(root);
+    // Native realpath resolves Windows junctions; the JS implementation only
+    // follows symlinks and would leave a junction looking like a plain folder.
+    this.root = canonicalPath(root);
     const legacy = this.resolve(
       ".obsidian/plugins/light-okr/legacy-notes.json",
       "internal",
@@ -123,17 +137,35 @@ export class VaultFiles {
         stat = fs.lstatSync(cur);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        // A Windows junction whose target is gone cannot be stat'ed, but the
+        // directory entry still marks it as a link and must not be traversed.
+        if (this.isLinkEntry(path.dirname(cur), path.basename(cur)))
+          throw new AppError("PATH_FORBIDDEN", "路径越界：不允许符号链接", 403);
       }
       if (stat) {
         if (stat.isSymbolicLink())
           throw new AppError("PATH_FORBIDDEN", "不允许符号链接", 403);
-        const real = fs.realpathSync(cur);
-        if (!real.startsWith(this.root + path.sep))
-          throw new AppError("PATH_FORBIDDEN", "路径越界", 403);
+        // Junction points are reported as directories by lstat on Windows.
+        // Resolving the real target is the only reliable containment check, and
+        // a segment that resolves elsewhere is a link even when it stays inside.
+        const real = canonicalPath(cur);
+        const same = process.platform === "win32"
+          ? real.toLowerCase() === cur.toLowerCase() : real === cur;
+        if (!same)
+          throw new AppError("PATH_FORBIDDEN", "路径越界：不允许符号链接", 403);
+        if (real !== this.root && !real.startsWith(this.root + path.sep))
+          throw new AppError("PATH_FORBIDDEN", "路径越界：不允许符号链接", 403);
         if(directory && stat.isDirectory())parents?.add(cur);
       }
     }
     return resolved;
+  }
+  private isLinkEntry(dir: string, name: string) {
+    try {
+      return fs.readdirSync(dir, { withFileTypes: true }).some((entry) => entry.name === name && entry.isSymbolicLink());
+    } catch {
+      return false;
+    }
   }
   read(relative: string) {
     return this.readBytes(relative).toString("utf8");

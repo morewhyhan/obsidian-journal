@@ -143,7 +143,8 @@
                         "pause_contact",
                         "resume_contact",
                         "cancel_item",
-                        "remember_fact"
+                        "remember_fact",
+                        "forget_fact"
                       ]
                     },
                     "work": {
@@ -572,6 +573,45 @@
                       ],
                       "description": "行为/任务反馈的实际发生时刻，带时区；business_date为所属日期。报告时间由Core另记；未知不猜。"
                     },
+                    "fact_subject": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "fact_scope": {
+                      "type": "array",
+                      "maxItems": 8,
+                      "minItems": 1,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 60
+                      }
+                    },
+                    "valid_until": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "supersedes": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 100
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "expected_rules_revision": {
                       "type": "integer",
                       "minimum": 0
@@ -593,6 +633,10 @@
                     },
                     "to_diary": {
                       "type": "boolean"
+                    },
+                    "status_check": {
+                      "type": "boolean",
+                      "description": "这是“看看用户现在在做什么”的状态检查：一旦近期聊天或记录已经说明近况，就不发出这一轮；只有长时间没有任何动静时才问。"
                     },
                     "strict": {
                       "type": "boolean"
@@ -946,11 +990,18 @@
                                   ],
                                   "additionalProperties": false
                                 }
+                              },
+                              "buffer_minutes": {
+                                "type": [
+                                  "integer",
+                                  "null"
+                                ],
+                                "minimum": 0,
+                                "maximum": 120
                               }
                             },
                             "required": [
-                              "date",
-                              "windows"
+                              "date"
                             ],
                             "additionalProperties": false
                           }
@@ -1996,7 +2047,29 @@
                           "enum": [
                             "type",
                             "fact",
-                            "kind"
+                            "kind",
+                            "fact_subject",
+                            "fact_scope",
+                            "valid_until",
+                            "supersedes"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "forget_fact"
+                          }
+                        }
+                      },
+                      "then": {
+                        "propertyNames": {
+                          "enum": [
+                            "type",
+                            "target_id",
+                            "expected_version"
                           ]
                         }
                       }
@@ -2120,7 +2193,8 @@
                             "schedule",
                             "body",
                             "to_diary",
-                            "strict"
+                            "strict",
+                            "quiet_exception"
                           ]
                         }
                       }
@@ -2147,7 +2221,8 @@
                             "schedule",
                             "body",
                             "to_diary",
-                            "strict"
+                            "strict",
+                            "quiet_exception"
                           ]
                         }
                       }
@@ -3004,11 +3079,18 @@
                                           ],
                                           "additionalProperties": false
                                         }
+                                      },
+                                      "buffer_minutes": {
+                                        "type": [
+                                          "integer",
+                                          "null"
+                                        ],
+                                        "minimum": 0,
+                                        "maximum": 120
                                       }
                                     },
                                     "required": [
-                                      "date",
-                                      "windows"
+                                      "date"
                                     ],
                                     "additionalProperties": false
                                   }
@@ -3882,7 +3964,8 @@
                         "pause_contact",
                         "resume_contact",
                         "cancel_item",
-                        "remember_fact"
+                        "remember_fact",
+                        "forget_fact"
                       ]
                     },
                     "work": {
@@ -4311,6 +4394,45 @@
                       ],
                       "description": "行为/任务反馈的实际发生时刻，带时区；business_date为所属日期。报告时间由Core另记；未知不猜。"
                     },
+                    "fact_subject": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "fact_scope": {
+                      "type": "array",
+                      "maxItems": 8,
+                      "minItems": 1,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 60
+                      }
+                    },
+                    "valid_until": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "supersedes": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 100
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "expected_rules_revision": {
                       "type": "integer",
                       "minimum": 0
@@ -4332,6 +4454,10 @@
                     },
                     "to_diary": {
                       "type": "boolean"
+                    },
+                    "status_check": {
+                      "type": "boolean",
+                      "description": "这是“看看用户现在在做什么”的状态检查：一旦近期聊天或记录已经说明近况，就不发出这一轮；只有长时间没有任何动静时才问。"
                     },
                     "strict": {
                       "type": "boolean"
@@ -4685,11 +4811,18 @@
                                   ],
                                   "additionalProperties": false
                                 }
+                              },
+                              "buffer_minutes": {
+                                "type": [
+                                  "integer",
+                                  "null"
+                                ],
+                                "minimum": 0,
+                                "maximum": 120
                               }
                             },
                             "required": [
-                              "date",
-                              "windows"
+                              "date"
                             ],
                             "additionalProperties": false
                           }
@@ -5735,7 +5868,29 @@
                           "enum": [
                             "type",
                             "fact",
-                            "kind"
+                            "kind",
+                            "fact_subject",
+                            "fact_scope",
+                            "valid_until",
+                            "supersedes"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "forget_fact"
+                          }
+                        }
+                      },
+                      "then": {
+                        "propertyNames": {
+                          "enum": [
+                            "type",
+                            "target_id",
+                            "expected_version"
                           ]
                         }
                       }
@@ -5859,7 +6014,8 @@
                             "schedule",
                             "body",
                             "to_diary",
-                            "strict"
+                            "strict",
+                            "quiet_exception"
                           ]
                         }
                       }
@@ -5886,7 +6042,8 @@
                             "schedule",
                             "body",
                             "to_diary",
-                            "strict"
+                            "strict",
+                            "quiet_exception"
                           ]
                         }
                       }
@@ -6743,11 +6900,18 @@
                                           ],
                                           "additionalProperties": false
                                         }
+                                      },
+                                      "buffer_minutes": {
+                                        "type": [
+                                          "integer",
+                                          "null"
+                                        ],
+                                        "minimum": 0,
+                                        "maximum": 120
                                       }
                                     },
                                     "required": [
-                                      "date",
-                                      "windows"
+                                      "date"
                                     ],
                                     "additionalProperties": false
                                   }
@@ -7645,7 +7809,8 @@
                         "pause_contact",
                         "resume_contact",
                         "cancel_item",
-                        "remember_fact"
+                        "remember_fact",
+                        "forget_fact"
                       ]
                     },
                     "work": {
@@ -8074,6 +8239,45 @@
                       ],
                       "description": "行为/任务反馈的实际发生时刻，带时区；business_date为所属日期。报告时间由Core另记；未知不猜。"
                     },
+                    "fact_subject": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "fact_scope": {
+                      "type": "array",
+                      "maxItems": 8,
+                      "minItems": 1,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 60
+                      }
+                    },
+                    "valid_until": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "supersedes": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 100
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "expected_rules_revision": {
                       "type": "integer",
                       "minimum": 0
@@ -8095,6 +8299,10 @@
                     },
                     "to_diary": {
                       "type": "boolean"
+                    },
+                    "status_check": {
+                      "type": "boolean",
+                      "description": "这是“看看用户现在在做什么”的状态检查：一旦近期聊天或记录已经说明近况，就不发出这一轮；只有长时间没有任何动静时才问。"
                     },
                     "strict": {
                       "type": "boolean"
@@ -8448,11 +8656,18 @@
                                   ],
                                   "additionalProperties": false
                                 }
+                              },
+                              "buffer_minutes": {
+                                "type": [
+                                  "integer",
+                                  "null"
+                                ],
+                                "minimum": 0,
+                                "maximum": 120
                               }
                             },
                             "required": [
-                              "date",
-                              "windows"
+                              "date"
                             ],
                             "additionalProperties": false
                           }
@@ -9498,7 +9713,29 @@
                           "enum": [
                             "type",
                             "fact",
-                            "kind"
+                            "kind",
+                            "fact_subject",
+                            "fact_scope",
+                            "valid_until",
+                            "supersedes"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "forget_fact"
+                          }
+                        }
+                      },
+                      "then": {
+                        "propertyNames": {
+                          "enum": [
+                            "type",
+                            "target_id",
+                            "expected_version"
                           ]
                         }
                       }
@@ -9622,7 +9859,8 @@
                             "schedule",
                             "body",
                             "to_diary",
-                            "strict"
+                            "strict",
+                            "quiet_exception"
                           ]
                         }
                       }
@@ -9649,7 +9887,8 @@
                             "schedule",
                             "body",
                             "to_diary",
-                            "strict"
+                            "strict",
+                            "quiet_exception"
                           ]
                         }
                       }
@@ -10506,11 +10745,18 @@
                                           ],
                                           "additionalProperties": false
                                         }
+                                      },
+                                      "buffer_minutes": {
+                                        "type": [
+                                          "integer",
+                                          "null"
+                                        ],
+                                        "minimum": 0,
+                                        "maximum": 120
                                       }
                                     },
                                     "required": [
-                                      "date",
-                                      "windows"
+                                      "date"
                                     ],
                                     "additionalProperties": false
                                   }

@@ -1,10 +1,11 @@
 import { afterEach, it, expect, vi } from "vitest";
-import { AstrBotClient } from "../apps/core/agent-client.js";
+import { AstrBotClient, SELF_TEST_TIMEOUT_MS } from "../apps/core/agent-client.js";
 import { loadConfig } from "../apps/core/config.js";
 import { atomicWrite, hash } from "../apps/core/files.js";
 import { AGENT_TOOLS } from "../packages/contracts/agent-tools.js";
 import { temporary, removeTemporary } from "./helpers.js";
 import path from "node:path";
+import fs from "node:fs";
 afterEach(() => vi.unstubAllGlobals());
 const SENT_TEXT = (body: any) => String(body?.input?.text ?? "");
 const input = {
@@ -15,6 +16,10 @@ const input = {
   text: "创建日记",
   occurred_at: new Date().toISOString(),
 };
+it("AstrBot's shipped tool catalog matches the Core contract", () => {
+  const file = path.resolve("integrations/astrbot/astrbot_plugin_secretary/tools.json");
+  expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual(AGENT_TOOLS);
+});
 it("configuration cannot advertise a tool policy different from the registered SDK catalog", () => {
   const root = temporary();
   try {
@@ -138,4 +143,11 @@ it("configured call and compose limits reach the adapter and startup waits for h
     code: "AGENT_STARTING",
   });
   expect(fetch).toHaveBeenCalledTimes(3);
+});
+
+it("the model self-test gets a longer leash than a normal turn", () => {
+  // A warm-up timeout right after a bridge restart used to mute the assistant
+  // until the retry cycle; the probe must tolerate a slower first answer.
+  expect(SELF_TEST_TIMEOUT_MS).toBeGreaterThanOrEqual(45000);
+  expect(SELF_TEST_TIMEOUT_MS).toBeLessThanOrEqual(60000);
 });

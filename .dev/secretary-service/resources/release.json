@@ -1,11 +1,11 @@
 {
   "format": 1,
   "service_version": "0.1.0",
-  "source_commit": "e94524b44d2f285ef88fa92b8d51cfbe0d7f4afa",
+  "source_commit": "f80131071ee66d60f89920505a1fb02899970dd7",
   "source_commit_is_base_only": true,
-  "source_hash": "sha256:f1cad8ebb1aa68d28e5dd82dc12d9f23cf6651795d7f01165608068a15b6c2c6",
+  "source_hash": "sha256:770e96d46e0f3e1becfd7166c5bb5b99e21cf285a0dc2724c4aeb4be8b08d762",
   "lock_hash": "sha256:a1340b831039fad6ccb59eea32648172911a3773627c3f9113f507112401a651",
-  "tools_hash": "sha256:d8fffc99b92a27a2a591d81cf5554ea22adec02c071e03a2be4b6686a811d47b",
+  "tools_hash": "sha256:0e8d80b4b19429201233897abdf4b6a9af6a8f2e6236cb87a4c351a5786b128a",
   "plugin_version": "1.0.0",
   "registry_schema": 2,
   "days_schema": 1,
@@ -15,19 +15,19 @@
   "files": [
     {
       "path": "apps/core/agent-client.ts",
-      "hash": "sha256:9fc9a7be6e26fe8bb8a16367d8fd04af14ccc3d79cd74b09c180657c01f52952"
+      "hash": "sha256:f67c36b02d24f6f0afcc2f23e363d030cb28eea3ef681aba74c2ff4f8abc2b97"
     },
     {
       "path": "apps/core/agent-runtime.ts",
-      "hash": "sha256:7389e8f519c5aa67fa2bb2d6d4686db867bc27c286cefdc31f308c0213cb27c3"
+      "hash": "sha256:dc0422e893e698db1971112d54fe6ad27da57d3974ab0ab8d2bf8b21606da543"
     },
     {
       "path": "apps/core/app.ts",
-      "hash": "sha256:43578b5cda26c909ff1d4b0bbd5f61009ef2781b3c6d3678a33c4ef26507ffbe"
+      "hash": "sha256:228bc9c19a3d5c545590b585471290bc7e637892580cfd7967b838fe23b599f7"
     },
     {
       "path": "apps/core/application.ts",
-      "hash": "sha256:e6460c10657efc48d6a68837feb4a7b263dffad2441d35a344c719549361c4a0"
+      "hash": "sha256:a99fbfae71138baf78cb6dcfa1f1129ba144debd46cded0c1df0444600d0c04a"
     },
     {
       "path": "apps/core/assistant.ts",
@@ -46,8 +46,12 @@
       "hash": "sha256:83c7fda85c7c966e7b92015594c62614cff3df6b72c0e6c4ff5efbbeb9baf2fd"
     },
     {
+      "path": "apps/core/classification.ts",
+      "hash": "sha256:8618f94b90d2d5fd87cfb09e8a540f14fd838a949848b93663274f7d89466d9c"
+    },
+    {
       "path": "apps/core/cli.ts",
-      "hash": "sha256:474f5aa042ee1230e3e83d0896081ce6d956fed1795b05ad24b66edde836b1f7"
+      "hash": "sha256:20675ec7459ea0acb51779a8e433f7902bfa68bce327d3c8bd1ca8af9636dde4"
     },
     {
       "path": "apps/core/clock.ts",
@@ -59,11 +63,11 @@
     },
     {
       "path": "apps/core/compatibility.ts",
-      "hash": "sha256:4b9b97720e540b8424c02f074837ed3239bca1b5039a4a4afb6dc915267f4174"
+      "hash": "sha256:b616d0e364c9b2b12c3211077bc8988065b875ede3271f96254f1deec8231d4a"
     },
     {
       "path": "apps/core/config.ts",
-      "hash": "sha256:b2a87b08e33469a377e1c276f0556dec0d3a4390166c276b4b56bed2b10224c6"
+      "hash": "sha256:7c8267018cce1aecb548eaf73e8ff33940fe4c9aa4584688f1c54c4fcc379474"
     },
     {
       "path": "apps/core/conversation.ts",
@@ -71,11 +75,11 @@
     },
     {
       "path": "apps/core/coordinator.ts",
-      "hash": "sha256:096aa5c409df265ac21973b37b08129c28b67219cd4dd888ca5f909d0711b759"
+      "hash": "sha256:96def57dad180cdfc58b478607ed940a96d6e60381d5fccadfbb1bb0b2c088ef"
     },
     {
       "path": "apps/core/core.ts",
-      "hash": "sha256:81003757124b7006abed87028be6044cd7d933d92c3dedf737f27b354025b468"
+      "hash": "sha256:a65bc4de013288c33987a064eccfe2c67ef42e8cd9dfa4e9fa9667c7ff1778a6"
     },
     {
       "path": "apps/core/deadline.ts",
@@ -86,12 +90,20 @@
       "hash": "sha256:cb4da170c6f34ac44a70a5ade2ad1f091d6f0e919b70157a58701d40dc04def0"
     },
     {
+      "path": "apps/core/fact-usage.ts",
+      "hash": "sha256:960cab67bd90d276728bd41b190cefc101cb446d04de8d59a866170280975caf"
+    },
+    {
+      "path": "apps/core/facts.ts",
+      "hash": "sha256:cca5a942370689aff37e707496d687ca6094b3a20e90f5cd82984b0addbd2b5d"
+    },
+    {
       "path": "apps/core/files.ts",
-      "hash": "sha256:c6bd150c9229ce3b0a64318a1b365fbac68df7ced9cba2824018c9b4654fdc3c"
+      "hash": "sha256:65489d0b500ef69062f809d366833ec305019669a4fd12a86353f23fae357530"
     },
     {
       "path": "apps/core/git.ts",
-      "hash": "sha256:307bd0c235476e399a3ff80c0242a8acb4fd82bb12db3f514955e66650efdc30"
+      "hash": "sha256:941c424731a029d77ffd01c3f5e3f3cb04dd6df5a93abff7832290feae8ca018"
     },
     {
       "path": "apps/core/journal.ts",
@@ -107,7 +119,7 @@
     },
     {
       "path": "apps/core/main.ts",
-      "hash": "sha256:666af43908921a5d773312dbd2bdb4f1945ead3d90bb59e3ec224c5060c5f8dd"
+      "hash": "sha256:f06cb81cb2b9bd7a6c628b6d24b59779144fa82b52ef1515b4e5929512bf3040"
     },
     {
       "path": "apps/core/maintenance.ts",
@@ -119,11 +131,11 @@
     },
     {
       "path": "apps/core/model-job.ts",
-      "hash": "sha256:dd15fa56b4cfbb8d902f31f1507e82226f2c1f7ae16132a5d72d4b5a20ba4827"
+      "hash": "sha256:cd68f8d3add86e4e2271b1baf3ae7d6d1080da966bee0b5416c5c220f714193e"
     },
     {
       "path": "apps/core/policy.ts",
-      "hash": "sha256:7e1d3b8acfec5118c71ffb346b8376c926d16d38effd263451a564cde4bb3379"
+      "hash": "sha256:723ae85663ab2c6f6865af659f2b1e8e7ca77271b64ceda8f0f2356c0304fc0f"
     },
     {
       "path": "apps/core/qq.ts",
@@ -131,15 +143,15 @@
     },
     {
       "path": "apps/core/read-stamps.ts",
-      "hash": "sha256:f9bf17aac9d1b48b0d4ff0784316ed5aea109ada722fbff581f31227a127017a"
+      "hash": "sha256:eefcc81d546b71ba0ec89444e3de3519a10ca61bb451dd228a368e5a79af3b55"
     },
     {
       "path": "apps/core/recovery-control.ts",
-      "hash": "sha256:e1131275bb5cbd82bb216c19ed7bdb986306e2fd6845a37091186e9da4589740"
+      "hash": "sha256:b15e3b588175975cb8ef51598433667463bff344095f4b808ad9479f3e78a727"
     },
     {
       "path": "apps/core/scheduler.ts",
-      "hash": "sha256:96b27f59a6f02b838dc9b8074f024555a93787a23831b14fa55dffb3843d1a9f"
+      "hash": "sha256:da5435535cbcde7a461275df473e853d071f019e881751571230b927bb901cb0"
     },
     {
       "path": "apps/core/snapshot-backup.ts",
@@ -147,7 +159,7 @@
     },
     {
       "path": "apps/core/store.ts",
-      "hash": "sha256:c95dae75a0b180352a1dd109c55d20a90e21dbeecf6a4f0920d3c99ce30edfda"
+      "hash": "sha256:1c4959b8e6dcb395103c7a74b2596e83d9237920959877bc6a42023b865ff923"
     },
     {
       "path": "apps/core/token-counter.ts",
@@ -159,11 +171,11 @@
     },
     {
       "path": "apps/core/work-checks.ts",
-      "hash": "sha256:79a270ed8c35b4f5dd37a9731c0e68ebdff8b7e36cfc987ead4cc489a548d4b2"
+      "hash": "sha256:bd20a1c03c19c2d180036d30fa542cb09e74ecee9e7a43d8880bc3b32937c7b5"
     },
     {
       "path": "apps/core/work-runner.ts",
-      "hash": "sha256:a7337ce0f404b7c898234588c45949d32f71fac5833b5f0d58b2f3323ecfb1f8"
+      "hash": "sha256:95498aeef6e3e7537db5d253ccd8e21ca5b494dd346d9d02cb3143e9b8b18ebb"
     },
     {
       "path": "apps/core/workspace.ts",
@@ -203,11 +215,11 @@
     },
     {
       "path": "integrations/astrbot/astrbot_plugin_secretary/bridge.py",
-      "hash": "sha256:d51ce2e57d09f156844fd87d73df0792ccac90d508a371030f77f03ba8f2751e"
+      "hash": "sha256:9e6ded061aabc38c9b31325aab0df18f4b2b1102fafc2e60cf064f1dd30735b3"
     },
     {
       "path": "integrations/astrbot/astrbot_plugin_secretary/main.py",
-      "hash": "sha256:8e257534322732ee83dc8929ba9bb354317614f29879dc15b504517f1528dd2c"
+      "hash": "sha256:6efd17021da30a2e70d63635accf1f28696cf949e4c581bf26f3e89c17f34903"
     },
     {
       "path": "integrations/astrbot/astrbot_plugin_secretary/metadata.yaml",
@@ -219,7 +231,7 @@
     },
     {
       "path": "integrations/astrbot/astrbot_plugin_secretary/tools.json",
-      "hash": "sha256:292525a1f7e9f693182e895d3dec698ee947d58b279e77559648b30327b03b99"
+      "hash": "sha256:9f84f0937918afc878bd5c85a297ccd73853b008969327cc2c3138a1055f93ac"
     },
     {
       "path": "packages/calendar/index.ts",
@@ -227,7 +239,7 @@
     },
     {
       "path": "packages/contracts/action-fields.ts",
-      "hash": "sha256:be7d0a9fb392209cfc69ed4cb1f9ade0e2ba7f358d18c7b6c6a8760a206d2d91"
+      "hash": "sha256:1e78edb5219867c7d5a90b271d181608eb9544e39f111dd7ef39ac1778282316"
     },
     {
       "path": "packages/contracts/agent-tools.ts",
@@ -235,7 +247,11 @@
     },
     {
       "path": "packages/contracts/api.ts",
-      "hash": "sha256:89edd4aa9f6e2dc77cf1743abb51baf4c5cfd141928be009758fc0e5fba0b10a"
+      "hash": "sha256:8401fb08a21e8a7bbed3a6b11465f325f8aa65eb826d30eddb13e40e29703c3a"
+    },
+    {
+      "path": "packages/contracts/facts.ts",
+      "hash": "sha256:a06626c6f31d1dd5599daf65107f04bcb94e896f355ed9f227db0f41090f6570"
     },
     {
       "path": "packages/contracts/markdown.ts",
@@ -243,19 +259,19 @@
     },
     {
       "path": "packages/contracts/openapi.json",
-      "hash": "sha256:314c8b93ad030d4ee937ea186e872e860f0ae184f5bcf6b21ef900d07ef38304"
+      "hash": "sha256:a019d8a4bd0628a6e80015e6de1f2ab3ac18925dda548f5842d1481fce033b36"
     },
     {
       "path": "packages/contracts/schemas.json",
-      "hash": "sha256:d463e2bb34f8e4135242adca581b41ed1d529229ca65994f627aad0d7d22ddfb"
+      "hash": "sha256:d7f80ba21364bceccd38327b5165127d5458d6fa416e16f36745a569f2ba39e8"
     },
     {
       "path": "packages/contracts/types.ts",
-      "hash": "sha256:0c308c8824ae3cd89e44d1fb8da951712f4085fcce837ad5c2f145ad615ac5d4"
+      "hash": "sha256:8d13e42f877cc5049679dd644c660d3878f31f971324e3aa3ff2c7c03919d9cc"
     },
     {
       "path": "packages/contracts/vendor.d.ts",
-      "hash": "sha256:1ce1be09e92a46c2eda3dd1fbd124f157fae579045a35d25bcd38c90bdca8700"
+      "hash": "sha256:7316cced80bf144a9346cec81e4d7c977edb1a0f143ebe21b560bef6f6513266"
     },
     {
       "path": "packages/contracts/work.ts",
@@ -263,11 +279,15 @@
     },
     {
       "path": "packages/domain/actions.ts",
-      "hash": "sha256:5a9eea2c359d1a66ea98dab5f4b1db2c3e7e220ea0e96a4b6d55551896b79c13"
+      "hash": "sha256:310677063a3d05395524cc73a5a80f18b5f89f39a88aa68a25d97ca794afb3ed"
     },
     {
       "path": "packages/domain/assistant.ts",
-      "hash": "sha256:73112432a6276caa831f0ce0491a7c54599319a05a2b92ea3547eddaf6271280"
+      "hash": "sha256:495d9f4d1e34f646f892b6c399589913f12f9766b70031e776366f483d9ff892"
+    },
+    {
+      "path": "packages/domain/automation-diagnostics.ts",
+      "hash": "sha256:deb5b0727e0180cea4d8e1b89f38fe91d7bc87145015f93016031a08ab4b9ef2"
     },
     {
       "path": "packages/domain/decisions.ts",
@@ -279,7 +299,7 @@
     },
     {
       "path": "packages/domain/planning.ts",
-      "hash": "sha256:e44399cf4dc21c03d3c59c8f76bbf1fe2a50c07a3483e04c21d18315d3c0b2d5"
+      "hash": "sha256:450b822e961f87b5a437c0bbb5450454c5f3d244be27a0cc276d0b4ece74365f"
     },
     {
       "path": "packages/domain/retention.ts",
@@ -287,11 +307,11 @@
     },
     {
       "path": "packages/domain/scheduling.ts",
-      "hash": "sha256:cde33b1ae282e5e700502fec4f589dc508fa5daa6c2b41603beae7671920590c"
+      "hash": "sha256:2e0c3db08542212c54259156bd93afb8f5effe57bea25f0764a06f7f97e476e4"
     },
     {
       "path": "packages/domain/work.ts",
-      "hash": "sha256:7f5be38a9fc36406327adb06eebf0de634cd5284c89b9df98b01d55994fd80fe"
+      "hash": "sha256:bd675ce7c363dd635b82b6e3b40b33d6555c7fc8eea1f61769a4a9ba253efe11"
     },
     {
       "path": "packages/shared/identity.ts",
@@ -299,7 +319,7 @@
     },
     {
       "path": "resources/config.default.json",
-      "hash": "sha256:0c690dc5634d54a70e54ab4c2fdca8935aea33f9d985ced1f38c234e37efc54b"
+      "hash": "sha256:afc1916e7fbab8ee7ad91916d65515b60aabdfd87f5dea4bce78c95511f0830e"
     },
     {
       "path": "resources/prompts/execution.md",
@@ -315,11 +335,11 @@
     },
     {
       "path": "resources/prompts/workflows.md",
-      "hash": "sha256:fea4e04595fe7a57086e1caa2798d997ff3ffc746edcf6993804f1f3eecf039a"
+      "hash": "sha256:1ca43afb4b146bea35298b9f01469eba4d6e2b3d506913170bb2188af3ac0619"
     },
     {
       "path": "resources/schema.sql",
-      "hash": "sha256:e1690c715c0fb5b43fc6fcd6ce7ddd4a804d889ff6be6ef6b182e0256049f15e"
+      "hash": "sha256:4083f7be37da0b93365bb46ea0429df6ff5529c6a725f26db37c5b98ca181b4e"
     },
     {
       "path": "resources/templates/周记模版.md",
@@ -391,7 +411,7 @@
     },
     {
       "path": "scripts/release.ts",
-      "hash": "sha256:c9b55440031cd00d7095b3d95c3ec7d6220233f80ff67a41dd773d5163568e60"
+      "hash": "sha256:26b188343f08860d09d0a3e95a89685ac0277df912884195a6d961eb0ff3e873"
     }
   ]
 }

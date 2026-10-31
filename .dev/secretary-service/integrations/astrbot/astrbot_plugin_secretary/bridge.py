@@ -39,6 +39,7 @@ class Turn:
         self.versions = {}
         self.plan_ids = set()
         self.has_mutation = False
+        self.memo = {}
         self.native = payload.get('execution_mode') == 'tools-v2'
         self.observe_versions(payload.get("context", {}))
 
@@ -53,7 +54,44 @@ class Turn:
             for key in ('items','plans','proposals','assistant','objects','tasks','habits','automations','user_rules','followups','updated_refs'):
                 if key in value: self.observe_versions(value[key])
 
+    # Tools that cannot change state: repeating one with identical arguments
+    # always yields the same answer, so a live loop should read it, not pay again.
+    READ_ONLY_SECRETARY = {
+        "state", "day", "status", "planning", "planning_context", "followups",
+        "board", "capabilities", "rules", "automations", "preferences",
+        "periods", "history", "history_content", "trash",
+    }
+    READ_ONLY_WORKSPACE = {"list", "read", "search", "tree", "stat", "outline"}
+
+    def _memo_key(self, name, args):
+        if name == "get_context":
+            return True, "get_context:" + json.dumps(args, sort_keys=True, ensure_ascii=False)
+        if name == "secretary" and args.get("operation") in self.READ_ONLY_SECRETARY:
+            return True, "secretary:" + json.dumps(args, sort_keys=True, ensure_ascii=False)
+        if name == "workspace" and args.get("operation") in self.READ_ONLY_WORKSPACE:
+            return True, "workspace:" + json.dumps(args, sort_keys=True, ensure_ascii=False)
+        return False, ""
+
     async def call(self, name, args):
+        memo, key = self._memo_key(name, args)
+        if memo and key in self.memo:
+            # Break identical read loops. The repeat still costs budget (a loop
+            # must stay bounded) but it is not worth another Core round-trip, and
+            # the answer tells the model to move on instead of retrying.
+            self.used += 1
+            if self.used > self.limit:
+                raise ValueError("TOOL_LIMIT")
+            return json.dumps({
+                "repeat": True,
+                "notice": "同一调用本回合已经执行过，结果未变化；直接用这个结果继续，不要重复同一调用。",
+                "result": json.loads(self.memo[key]),
+            }, ensure_ascii=False)
+        out = await self._call_impl(name, args)
+        if memo:
+            self.memo[key] = out
+        return out
+
+    async def _call_impl(self, name, args):
         self.used += 1
         if self.used > self.limit:
             raise ValueError("TOOL_LIMIT")
@@ -159,6 +197,20 @@ class Bridge:
         self.last_failure = None
         self.sends = {}  # bounded duplicate protection; Core owns durable claims
 
+    def tools_for(self, native: bool, self_test: bool = False):
+        """Native turns answer in prose, so the legacy submit_proposal schema is
+        dead weight: it doubles the prompt and every token is latency and cost.
+        The protocol probe never calls a tool, and shipping the whole catalog to
+        it made the first call after every restart time out while the provider
+        warmed up."""
+        # The legacy self-test returns its answer through submit_proposal, so it
+        # keeps the full catalog; only native turns drop the duplicate schema.
+        if self_test:
+            return self.tools
+        if not native:
+            return self.tools
+        return [tool for tool in self.tools if tool["name"] != "submit_proposal"]
+
     async def core_post(self, route, payload):
         async with self.session.post(
             self.core_url + route, json=payload, allow_redirects=False,
@@ -191,6 +243,7 @@ class Bridge:
         app.router.add_get("/healthz", self.health)
         app.router.add_post("/interpret", self.interpret)
         app.router.add_post("/compose", self.compose)
+        app.router.add_post("/classify", self.classify)
         app.router.add_post("/send", self.send)
         self.runner = web.AppRunner(app, access_log=None)
         await self.runner.setup()
@@ -252,6 +305,26 @@ class Bridge:
         if not text or len(text) > 1800:
             raise ValueError("INVALID_RECEIPT")
         return web.json_response({"text": text})
+
+    async def classify(self, request):
+        payload = await request.json()
+        timeout = min(60, max(10, payload.get('limits', {}).get('timeout_ms', 30000) / 1000))
+        try:
+            async with asyncio.timeout(timeout):
+                async with self.lock:
+                    # Understanding spends model budget like any other call; the
+                    # Core job ledger must record it.
+                    job = await self.core_post('/internal/model/jobs/start', {
+                        'input_id': 'classify-' + uuid.uuid4().hex, 'kind': 'classify', 'tools_hash': self.tools_hash})
+                    try:
+                        result = await self.context.classify_secretary(payload)
+                    finally:
+                        with suppress(Exception):
+                            await self.core_post('/internal/model/jobs/end', {'job_id': job['id']})
+        except (ValueError, TimeoutError) as error:
+            return web.json_response(
+                {'error': {'code': 'AGENT_INVALID', 'message': str(error)[:200]}}, status=502)
+        return web.json_response(result)
 
     async def receive(self, event):
         if event.get_platform_id() != self.platform_id:

@@ -7,6 +7,7 @@ export function earliestSlot(
   duration: number,
   now: string,
   excludePlan?: string,
+  bufferMinutes = 0,
 ) {
   if (
     !Array.isArray(windows) ||
@@ -42,15 +43,19 @@ export function earliestSlot(
       end: Date.parse(p.window_end),
     }))
     .sort((a, b) => a.start - b.start);
+  // The trailing reserve belongs to the confirmed window and is not schedulable.
+  const buffer = Math.max(0, bufferMinutes) * 60000;
   for (const range of ranges) {
+    const limit = range.end - buffer;
     let cursor = Math.max(range.start, Date.parse(now));
+    if (cursor + duration * 60000 > limit) continue;
     for (const block of occupied) {
       if (block.end <= cursor) continue;
-      if (block.start >= range.end) break;
-      if (cursor + duration * 60000 <= block.start) break;
+      if (block.start >= limit) break;
+      if (cursor + duration * 60000 <= Math.min(limit, block.start)) break;
       cursor = Math.max(cursor, block.end);
     }
-    if (cursor + duration * 60000 <= range.end)
+    if (cursor + duration * 60000 <= limit)
       return {
         start: DateTime.fromMillis(cursor).toUTC().toISO()!,
         end: DateTime.fromMillis(cursor + duration * 60000)

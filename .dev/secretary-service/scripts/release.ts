@@ -5,6 +5,10 @@ import {projectRoot,resource} from "../apps/core/config.js";
 import {atomicWrite,canonicalJson,hash} from "../apps/core/files.js";
 import {AGENT_TOOLS} from "../packages/contracts/agent-tools.js";
 
+const pluginTools=JSON.parse(fs.readFileSync(path.join(projectRoot,"integrations/astrbot/astrbot_plugin_secretary/tools.json"),"utf8"));
+if(JSON.stringify(pluginTools)!==JSON.stringify(AGENT_TOOLS))
+  throw new Error("AstrBot tool catalog differs from Core; run npm run contracts before building");
+
 const files:{path:string;hash:string}[]=[];
 function visit(relative:string) {
   for(const entry of fs.readdirSync(path.join(projectRoot,relative),{withFileTypes:true})) {
