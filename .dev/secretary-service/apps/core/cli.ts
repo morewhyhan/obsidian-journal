@@ -69,11 +69,17 @@ async function main() {
     return;
   }
   if (command === "metrics") {
-    const store = new Store(root, loadConfig(root));
+    // Read-only report: it must work while Core is running and holding the lock.
+    const Database = (await import("better-sqlite3")).default;
+    const db = new Database(path.join(root, ".agent", "data", "state.sqlite"), {
+      readonly: true,
+      fileMustExist: true,
+    });
     try {
-      console.log(JSON.stringify(burdenMetrics(store), null, 1));
+      const shim = { db, now: () => new Date().toISOString() } as any;
+      console.log(JSON.stringify(burdenMetrics(shim), null, 1));
     } finally {
-      await store.close();
+      db.close();
     }
     return;
   }

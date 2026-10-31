@@ -1,9 +1,9 @@
 {
   "format": 1,
   "service_version": "0.1.0",
-  "source_commit": "f80131071ee66d60f89920505a1fb02899970dd7",
+  "source_commit": "adc25e05d2d7feaab5ff251fb7c942b63c3ef55e",
   "source_commit_is_base_only": true,
-  "source_hash": "sha256:770e96d46e0f3e1becfd7166c5bb5b99e21cf285a0dc2724c4aeb4be8b08d762",
+  "source_hash": "sha256:1be42d0fd3a0408e68679062c7737e41c979ec2e752961a12f492ed2577e4ce8",
   "lock_hash": "sha256:a1340b831039fad6ccb59eea32648172911a3773627c3f9113f507112401a651",
   "tools_hash": "sha256:0e8d80b4b19429201233897abdf4b6a9af6a8f2e6236cb87a4c351a5786b128a",
   "plugin_version": "1.0.0",
@@ -23,7 +23,7 @@
     },
     {
       "path": "apps/core/app.ts",
-      "hash": "sha256:228bc9c19a3d5c545590b585471290bc7e637892580cfd7967b838fe23b599f7"
+      "hash": "sha256:7028b8ae019f7ba763c23672698b3df1963433224dd1fc8fd628cb7b408f5db8"
     },
     {
       "path": "apps/core/application.ts",
@@ -51,7 +51,7 @@
     },
     {
       "path": "apps/core/cli.ts",
-      "hash": "sha256:20675ec7459ea0acb51779a8e433f7902bfa68bce327d3c8bd1ca8af9636dde4"
+      "hash": "sha256:6ac34310164ae9fc29f0da2d6a2cfe094275917937f01db5c78947f53733e0fa"
     },
     {
       "path": "apps/core/clock.ts",
@@ -67,7 +67,7 @@
     },
     {
       "path": "apps/core/config.ts",
-      "hash": "sha256:7c8267018cce1aecb548eaf73e8ff33940fe4c9aa4584688f1c54c4fcc379474"
+      "hash": "sha256:d3f72f21809cd0e5435818bbe7f7d4767fd6f830499a0d56a4be9031dfb6ebce"
     },
     {
       "path": "apps/core/conversation.ts",
@@ -79,7 +79,7 @@
     },
     {
       "path": "apps/core/core.ts",
-      "hash": "sha256:a65bc4de013288c33987a064eccfe2c67ef42e8cd9dfa4e9fa9667c7ff1778a6"
+      "hash": "sha256:5d23351e3f3e2b1de78754bba9387a2ec8f393acdc691d745bd482f544e97d9e"
     },
     {
       "path": "apps/core/deadline.ts",
@@ -95,7 +95,7 @@
     },
     {
       "path": "apps/core/facts.ts",
-      "hash": "sha256:cca5a942370689aff37e707496d687ca6094b3a20e90f5cd82984b0addbd2b5d"
+      "hash": "sha256:77c7483a851e0aff63eb85b865e2a1d1f4d62649fbdc0f5cf3c92079a9795345"
     },
     {
       "path": "apps/core/files.ts",
@@ -126,12 +126,24 @@
       "hash": "sha256:582d55cfa3bcf86b2c13f0b030d004f3fd7937d5ef6e815b4124fa2256d5a66c"
     },
     {
+      "path": "apps/core/message-split.ts",
+      "hash": "sha256:fbd888d87ce314fdfb4d229b9c1306dd2ccaf6d5749d07015cac32d49b78a218"
+    },
+    {
+      "path": "apps/core/metrics.ts",
+      "hash": "sha256:4af8b5005e97c443047587c23b9071ad909f5dad5ac5fcc5d30b2daed6807007"
+    },
+    {
       "path": "apps/core/model-budget.ts",
-      "hash": "sha256:8bf4347663a6bd6e802c7ccf2762037d761565baef0bc0bdd88a18353d7fef13"
+      "hash": "sha256:27702f89b2afe35be47799eeb333ce477afdbbe2631584f90103074f1d018ccb"
     },
     {
       "path": "apps/core/model-job.ts",
-      "hash": "sha256:cd68f8d3add86e4e2271b1baf3ae7d6d1080da966bee0b5416c5c220f714193e"
+      "hash": "sha256:8992dc031c2bc339460dd5a0431c7f2f9eabb5238183fb2305f0f68e9114856e"
+    },
+    {
+      "path": "apps/core/plain-text.ts",
+      "hash": "sha256:3d533a2bed20e9dc4dccb911f330732b60d696ba9d3b73ab40c79cbb61a1556f"
     },
     {
       "path": "apps/core/policy.ts",
@@ -151,7 +163,7 @@
     },
     {
       "path": "apps/core/scheduler.ts",
-      "hash": "sha256:da5435535cbcde7a461275df473e853d071f019e881751571230b927bb901cb0"
+      "hash": "sha256:ac013d8f84a9ecd88f7c6bae6afa82b29687681cac62c248d33488c3a5fcf2dd"
     },
     {
       "path": "apps/core/snapshot-backup.ts",
@@ -251,7 +263,7 @@
     },
     {
       "path": "packages/contracts/facts.ts",
-      "hash": "sha256:a06626c6f31d1dd5599daf65107f04bcb94e896f355ed9f227db0f41090f6570"
+      "hash": "sha256:27b1c34a0b8c2497f39dd94261032abf9e7d682e9f45ec1d8d9d6d5f3aa46eb3"
     },
     {
       "path": "packages/contracts/markdown.ts",
@@ -327,7 +339,7 @@
     },
     {
       "path": "resources/prompts/persona.md",
-      "hash": "sha256:517699588add0091cc9e787ee7a0e40a3df87bcc3a4168af649fd87835c40580"
+      "hash": "sha256:7c0c17a879c612a93a0bf7e2b3ca9134db01f71297835c1bb61f78a639242d45"
     },
     {
       "path": "resources/prompts/system.md",
@@ -335,7 +347,7 @@
     },
     {
       "path": "resources/prompts/workflows.md",
-      "hash": "sha256:1ca43afb4b146bea35298b9f01469eba4d6e2b3d506913170bb2188af3ac0619"
+      "hash": "sha256:a727374ea81d975a0fa09fe7b1af9874071469b1d85cf6d247181631d0924d13"
     },
     {
       "path": "resources/schema.sql",
