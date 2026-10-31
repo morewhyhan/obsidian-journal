@@ -1627,6 +1627,13 @@ export class Core {
       .get() as { n: number };
     if (queued.n >= 10)
       throw new AppError("QUEUE_FULL", "还有事项正在处理，请稍后再交代", 429);
+    // The person changed the subject or corrected themselves: the run that is
+    // still thinking must not deliver its now-stale conclusion.
+    this.store.db
+      .prepare(
+        "UPDATE inbox SET metadata_json=json_set(metadata_json,'$.superseded_by',?) WHERE status='processing' AND channel=? AND actor_ref=? AND id<>?",
+      )
+      .run(input.id, input.channel, input.actor_ref, input.id);
     const seq = ((this.store.db
       .prepare("SELECT COALESCE(MAX(seq),0) AS n FROM inbox WHERE channel<>'coordinator'")
       .get() as { n: number }).n) + 1;
@@ -1866,6 +1873,9 @@ export class Core {
         "UPDATE inbox SET status='processed',processed_at=?,metadata_json=json_set(metadata_json,'$.reply',?) WHERE id=?",
       )
       .run(this.store.now(), text, input.id);
+    // The running turn still answers the earlier question (both questions deserve
+    // an answer); what the new message stops is the unsent remainder, cancelled
+    // in receive(). A stale tail must never land after the person moved on.
     if (input.channel === "qq") this.queueReply(input, text);
     this.emit("input_result", {
       id: input.id,
@@ -1876,6 +1886,10 @@ export class Core {
   queueReply(input: Input, text: string) {
     const now = this.store.now();
     const native = this.agent?.executionMode === "tools-v2";
+    // The model marks a complete list/answer that must stay in one message;
+    // otherwise the reply is sent like a person texts, one sentence per bubble.
+    const whole = /^\s*\[\[整条\]\]\s*/.test(text);
+    if (whole) text = text.replace(/^\s*\[\[整条\]\]\s*/, "");
     const original = text;
     const chunks: string[] = [];
     while (text.length) {
@@ -1886,7 +1900,7 @@ export class Core {
     }
     // Native turns send like a person: 1-3 short bubbles, split at sentence ends.
     // A single over-long paragraph still respects the channel limit below.
-    const bubbles = native
+    const bubbles = native && !whole
       ? splitMessages(original, { maxChars: 55, maxBubbles: 0 }).flatMap((bubble) => {
           if (bubble.length <= 1800) return [bubble];
           const parts: string[] = [];

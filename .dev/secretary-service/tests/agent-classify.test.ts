@@ -146,3 +146,13 @@ it("C1 the persona explains plain-text layout and refuses to grade the user", ()
   expect(prompt).toContain("只回答，不评价");
   expect(prompt).toContain("不点评完成得好不好");
 });
+
+it("C1 the persona picks one block for full answers and bubbles for chat", () => {
+  const prompt = fs.readFileSync(
+    path.join(process.cwd(), "resources/prompts/persona.md"),
+    "utf8",
+  );
+  expect(prompt).toContain("[[整条]]");
+  expect(prompt).toContain("什么时候整条发");
+  expect(prompt).toContain("闲聊、解释、追问");
+});

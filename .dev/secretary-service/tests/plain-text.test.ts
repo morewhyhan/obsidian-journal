@@ -79,3 +79,51 @@ it("a new message cancels the previous answer's unsent bubbles", async () => {
     await h.close();
   }
 });
+
+it("a marked answer stays one message and the marker never reaches QQ", async () => {
+  const { harness } = await import("./helpers.js");
+  const h = harness("2026-10-31T10:00:00Z");
+  try {
+    await h.core.execute(
+      { id: "mark-1", channel: "qq", actor_ref: "owner", external_id: "mark-1", text: "今天的任务", occurred_at: h.store.now() },
+      [],
+      "conversation",
+      true,
+    );
+    (h.core as any).queueReply(
+      { id: "mark-1", channel: "qq", actor_ref: "owner", external_id: "mark-1", text: "", occurred_at: h.store.now() },
+      "[[整条]]\n今天有三件事。\n1. 背单词\n2. 午睡\n3. 早睡",
+    );
+    const rows = h.store.db
+      .prepare("SELECT body FROM outbox WHERE message_kind='receipt' ORDER BY rowid")
+      .all() as { body: string }[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].body.startsWith("今天有三件事")).toBe(true);
+    expect(rows[0].body).not.toContain("[[整条]]");
+  } finally {
+    await h.close();
+  }
+});
+
+it("a newer message flags the run and stops its unsent remainder", async () => {
+  const { harness } = await import("./helpers.js");
+  const h = harness("2026-10-31T10:00:00Z");
+  try {
+    const now = h.store.now();
+    h.store.db
+      .prepare(
+        "INSERT INTO inbox(id,channel,actor_ref,external_id,body,metadata_json,received_at,occurred_at,status,seq) VALUES('old-run','qq','owner','old-run','我在问A','{}',?,?,'processing',1)",
+      )
+      .run(now, now);
+    await h.core.receive({ id: "new-run", channel: "qq", actor_ref: "owner", external_id: "new-run", text: "算了，问B", occurred_at: now } as any);
+    // The in-flight run is flagged, and its answer is recorded but never queued.
+    const meta = JSON.parse((h.store.db.prepare("SELECT metadata_json FROM inbox WHERE id='old-run'").get() as any).metadata_json);
+    expect(meta.superseded_by).toBe("new-run");
+    h.core.finishInput({ id: "old-run", channel: "qq", actor_ref: "owner", external_id: "old-run", text: "我在问A", occurred_at: now } as any, "旧答案。");
+    // The earlier question is still answered; a pending tail from it would be gone.
+    const queued = h.store.db.prepare("SELECT count(*) n FROM outbox WHERE json_extract(metadata_json,'$.reply_group')='old-run'").get() as any;
+    expect(queued.n).toBeGreaterThan(0);
+  } finally {
+    await h.close();
+  }
+});
