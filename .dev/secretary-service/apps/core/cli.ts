@@ -14,6 +14,7 @@ import { Store,restoreData } from "./store.js";
 import { SnapshotBackup,backupKey,decryptBackup } from "./snapshot-backup.js";
 import { recoveryInventory,releaseRecovery,type RecoveryScope } from "./recovery-control.js";
 import { explainAutomation } from "../../packages/domain/automation-diagnostics.js";
+import { burdenMetrics } from "./metrics.js";
 import {approveRecoveryBudget} from "./model-budget.js";
 async function main() {
   const command = process.argv[2],
@@ -65,6 +66,15 @@ async function main() {
         restoreData(root,value),
       ),
     );
+    return;
+  }
+  if (command === "metrics") {
+    const store = new Store(root, loadConfig(root));
+    try {
+      console.log(JSON.stringify(burdenMetrics(store), null, 1));
+    } finally {
+      await store.close();
+    }
     return;
   }
   if (command === "explain-automation") {

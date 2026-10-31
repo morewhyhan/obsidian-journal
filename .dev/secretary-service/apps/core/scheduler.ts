@@ -941,12 +941,16 @@ export class Scheduler {
                 .get(part[1] + (n === 2 ? "" : ":" + (n - 1))) as any;
               if (previous?.status !== "sent") continue;
             }
-            if (row.counts_as_proactive) {
+            {
+              // Any queued body stamped with an older revocation revision may quote
+              // something the person just forgot; it is not delivered.
               const queuedRevision = JSON.parse(row.source_versions_json).revocation;
               if (typeof queuedRevision === "number" && queuedRevision !== store.revocationRevision()) {
                 store.db.prepare("UPDATE outbox SET status='cancelled',finished_at=?,updated_at=? WHERE id=?").run(store.now(),store.now(),row.id);
                 continue;
               }
+            }
+            if (row.counts_as_proactive) {
               const candidate = available.find(
                 (c) =>
                   row.dedupe_key === c.id + ":initial" ||

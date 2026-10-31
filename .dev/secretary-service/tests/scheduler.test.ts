@@ -1406,3 +1406,28 @@ it("a status check waits two hours of silence and then the next full hour", asyn
 });
 
 
+
+it("a queued reply stamped before a revocation is cancelled at delivery", async () => {
+  const t = setup("2026-10-31T09:00:00Z");
+  const h = t.h;
+  const now = h.store.now();
+  h.store.db
+    .prepare(
+      "INSERT INTO outbox(id,channel,recipient_ref,dedupe_key,target_refs_json,source_versions_json,metadata_json,message_kind,body,content_hash,scheduled_at,expires_at,counts_as_proactive,created_at,updated_at,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    )
+    .run(
+      "stale-reply", "qq", "user", "old-input:reply", "[]",
+      JSON.stringify({ revocation: 0 }),
+      JSON.stringify({ reply_group: "old-input", sequence: 1, purpose: "reply" }),
+      "receipt", "你喜欢的还是蓝封面那本。", "h", now,
+      new Date(Date.parse(now) + 600000).toISOString(), 0, now, now, "pending",
+    );
+  // Something is forgotten after this reply was queued.
+  h.store.db
+    .prepare("INSERT INTO revocations(id,kind,target_id,target_version,scope_json,reason_code,revoked_at,cleanup_state) VALUES('rev1','fact','fact-x',1,'[]','user_forgot',?,'done')")
+    .run(now);
+  h.store.updateRuntimeMeta((meta) => ({ ...meta, revocation_revision: Number(meta.revocation_revision ?? 0) + 1 }));
+  await t.scheduler.tick();
+  const row = h.store.db.prepare("SELECT status FROM outbox WHERE id='stale-reply'").get() as any;
+  expect(row.status).toBe("cancelled");
+});

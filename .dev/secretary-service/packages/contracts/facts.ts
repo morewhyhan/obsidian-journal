@@ -26,7 +26,9 @@ export type Fact = {
   source: FactSource;
   valid_from: string;
   valid_until: string | null;
-  status: "active" | "superseded" | "revoked" | "expired";
+  // "conflicted": two active statements about the same subject/scope disagree.
+  // Nothing may rely on either until the person resolves it.
+  status: "active" | "superseded" | "revoked" | "expired" | "conflicted";
   supersedes: string[];
   superseded_by: string | null;
   retention_reason: string;
@@ -82,7 +84,7 @@ export function validateFactFile(value: unknown): FactFile {
       typeof source.at !== "string" || !source.at) invalid(at + ".source");
     if (typeof fact.valid_from !== "string" || !fact.valid_from) invalid(at + ".valid_from");
     if (fact.valid_until !== null && typeof fact.valid_until !== "string") invalid(at + ".valid_until");
-    if (!["active", "superseded", "revoked", "expired"].includes(fact.status)) invalid(at + ".status");
+    if (!["active", "superseded", "revoked", "expired", "conflicted"].includes(fact.status)) invalid(at + ".status");
     if (!Array.isArray(fact.supersedes) || fact.supersedes.some((s) => typeof s !== "string")) invalid(at + ".supersedes");
     if (fact.superseded_by !== null && typeof fact.superseded_by !== "string") invalid(at + ".superseded_by");
     if (typeof fact.retention_reason !== "string") invalid(at + ".retention_reason");

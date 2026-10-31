@@ -27,7 +27,7 @@ import { Coordinator } from "./coordinator.js";
 import { AssistantRuntime } from "./assistant.js";
 import { policyStamp } from "./tool-effects.js";
 import { reconcileWork, wakeOnFeedback } from "./work-checks.js";
-import { searchFacts, readFacts, appendFactTo, forgetFactTo, cleanupRevokedFragments, factsDigest, activeFacts, scrubLegacyUserNotes } from "./facts.js";
+import { searchFacts, readFacts, appendFactTo, forgetFactTo, cleanupRevokedFragments, factsDigest, activeFacts, scrubLegacyUserNotes, factConflicts } from "./facts.js";
 import { recordFactUsage, applyFactUsage } from "./fact-usage.js";
 import { splitMessages } from "./message-split.js";
 import { publishInterpretation, understoodSeq, validateInterpretation } from "./classification.js";
@@ -2232,6 +2232,9 @@ export class Core {
       preferences,
       facts: facts.items,
       facts_truncated: facts.matched,
+      // Two statements disagree: nothing may rely on either until the person says
+      // which one holds. The model must ask, not pick by recency.
+      fact_conflicts: factConflicts(this.store),
       // What is still unread is authoritative: the model sees the contiguous
       // understood watermark and the newer inputs it has not interpreted yet.
       understood_seq: understoodSeq(this.store),

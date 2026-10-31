@@ -170,3 +170,25 @@ it("a zero daily cap means unlimited, not zero allowance", async () => {
   expect(budget).toContain("c.daily_requests > 0");
   expect(budget).toContain("c.daily_tokens > 0");
 });
+
+it("a running model job stops when the revocation list changes", async () => {
+  const { harness } = await import("./helpers.js");
+  const { beginModelJob, modelDeadline, endModelJob } = await import("../apps/core/model-job.js");
+  const h = harness("2026-10-31T09:00:00Z");
+  try {
+    const now = h.store.now();
+    h.store.db
+      .prepare(
+        "INSERT INTO inbox(id,channel,actor_ref,external_id,body,metadata_json,received_at,occurred_at,status,seq) VALUES('job-in','qq','owner','job-in','hi','{}',?,?,'processing',1)",
+      )
+      .run(now, now);
+    const job = beginModelJob(h.store, "job-in", "front");
+    expect(() => modelDeadline(h.store, true)).not.toThrow();
+    // Someone forgot a fact while the turn was thinking.
+    h.store.updateRuntimeMeta((meta) => ({ ...meta, revocation_revision: Number(meta.revocation_revision ?? 0) + 1 }));
+    expect(() => modelDeadline(h.store, true)).toThrow("撤销清单已变化");
+    endModelJob(h.store, job.id);
+  } finally {
+    await h.close();
+  }
+});

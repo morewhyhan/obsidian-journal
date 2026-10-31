@@ -262,3 +262,72 @@ it("A a queued message gets one honest notice when the assistant cannot answer",
   expect(rows[0].p).toBe("notice");
   expect(rows[0].body).toContain("模型暂时连不上");
 });
+
+it("N01.3 statements that disagree become conflicted and stay out of retrieval", async () => {
+  const h = harness("2026-10-31T09:00:00Z");
+  cleanups.push(() => h.close());
+  await h.run({ type: "remember_fact", fact: "周末一般在家", kind: "user_confirmed", fact_subject: "周末安排", fact_scope: ["生活"] } as any);
+  await h.run({ type: "remember_fact", fact: "周末一般去图书馆", kind: "user_confirmed", fact_subject: "周末安排", fact_scope: ["生活"] } as any);
+  const { readFacts, searchFacts, factConflicts } = await import("../apps/core/facts.js");
+  const facts = readFacts(h.store).facts;
+  expect(facts).toHaveLength(2);
+  expect(facts.every((f) => f.status === "conflicted")).toBe(true);
+  // Neither side may be served as the answer while they disagree.
+  expect(searchFacts(h.store, "周末", h.store.now()).items).toHaveLength(0);
+  const conflicts = factConflicts(h.store);
+  expect(conflicts).toHaveLength(2);
+  expect(JSON.stringify(conflicts)).not.toContain("图书馆");
+
+  // An explicit correction resolves it: the chosen statement becomes active.
+  await h.run({
+    type: "remember_fact",
+    fact: "周末一般去图书馆",
+    kind: "user_confirmed",
+    fact_subject: "周末安排",
+    fact_scope: ["生活"],
+    supersedes: facts[0].id,
+  } as any);
+  const after = readFacts(h.store).facts;
+  expect(after.find((f) => f.id === facts[0].id)!.status).toBe("superseded");
+  expect(after.find((f) => f.id === facts[1].id)!.status).toBe("superseded");
+  expect(after.filter((f) => f.status === "active")).toHaveLength(1);
+});
+
+it("N01.2 a scope named in the question narrows the candidates", async () => {
+  const h = harness("2026-10-31T09:00:00Z");
+  cleanups.push(() => h.close());
+  const { readFacts, searchFacts } = await import("../apps/core/facts.js");
+  await h.run({ type: "remember_fact", fact: "单词用蓝封面那本", kind: "user_confirmed", fact_scope: ["学习"] } as any);
+  await h.run({ type: "remember_fact", fact: "晚饭一般七点", kind: "user_confirmed", fact_scope: ["生活"] } as any);
+  const study = searchFacts(h.store, "学习 蓝封面", h.store.now());
+  expect(study.items.map((f) => f.content)).toEqual(["单词用蓝封面那本"]);
+  const dinner = searchFacts(h.store, "晚饭", h.store.now());
+  expect(dinner.items).toHaveLength(1);
+});
+
+it("N11.5 the burden report counts repeats, corrections and retries from real rows", async () => {
+  const h = harness("2026-10-31T09:00:00Z");
+  cleanups.push(() => h.close());
+  const { burdenMetrics } = await import("../apps/core/metrics.js");
+  const now = h.store.now();
+  const insert = h.store.db.prepare(
+    "INSERT INTO inbox(id,channel,actor_ref,external_id,body,metadata_json,received_at,occurred_at,status,seq,processed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+  );
+  insert.run("m1", "qq", "owner", "m1", "把我的单词本记一下", "{}", now, now, "processed", 1, now);
+  insert.run("m2", "qq", "owner", "m2", "把我的单词本记一下。", "{}", now, now, "processed", 2, now);
+  insert.run("m3", "qq", "owner", "m3", "不对，是蓝封面那本", "{}", now, now, "processed", 3, now);
+  insert.run("m4", "qq", "owner", "m4", "算了", "{}", now, now, "failed", 4, now);
+  h.store.db
+    .prepare(
+      "INSERT INTO outbox(id,channel,recipient_ref,dedupe_key,target_refs_json,source_versions_json,metadata_json,message_kind,body,content_hash,scheduled_at,expires_at,counts_as_proactive,created_at,updated_at,status,external_id,sent_at,finished_at) VALUES('o1','qq','owner','k1','[]','{}','{}','receipt','是这本吗？','h',?,?,0,?,?,'sent','e1',?,?)",
+    )
+    .run(now, new Date(Date.parse(now) + 600000).toISOString(), now, now, now, now);
+  const report = burdenMetrics(h.store, 7);
+  expect(report.user_messages).toBe(4);
+  expect(report.repeated_statements).toBe(1);
+  expect(report.correction_messages).toBe(1);
+  expect(report.questions_asked).toBe(1);
+  expect(report.failed_inputs).toBe(1);
+  expect(report.definitions.repeated_statements).toBeTruthy();
+  expect(report.caveat).toContain("不是成功率");
+});

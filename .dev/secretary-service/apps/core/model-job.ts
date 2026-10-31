@@ -12,7 +12,9 @@ export function beginModelJob(s:Store,inputId:string,kind:"front"|"background"|"
   }
   const ms=kind==="front"?120000:kind==="background"?60000:kind==="compose"?10000:kind==="classify"?60000:30000;
   const job={id:id("modeljob"),input_id:inputId,kind,generation:s.generation,deadline_at:new Date(Date.parse(now)+ms).toISOString(),
-    mono_deadline:performance.now()+ms,requests:0,compatibility_fingerprint:s.compatibility?.fingerprint??null};
+    mono_deadline:performance.now()+ms,requests:0,compatibility_fingerprint:s.compatibility?.fingerprint??null,
+    // A running turn must notice that the person forgot something.
+    revocation:s.revocationRevision()};
   s.updateRuntimeMeta(m=>({...m,model_job:job}));
   if(["front","background"].includes(kind))s.db.prepare("UPDATE inbox SET metadata_json=json_set(metadata_json,'$.model_job_id',?,'$.runtime_generation',?,'$.deadline_at',?) WHERE id=?")
     .run(job.id,s.generation,job.deadline_at,inputId);
@@ -25,6 +27,8 @@ export function modelDeadline(s:Store,required=false) {
   const job=s.runtimeMeta().model_job;
   if(!job && !required)return 125000;
   if(!job || job.generation!==s.generation)throw new AppError("MODEL_JOB_REQUIRED","缺少当前代次的模型作业",403);
+  if(typeof job.revocation==="number" && job.revocation!==s.revocationRevision())
+    throw new AppError("MODEL_JOB_REVOKED","撤销清单已变化，本回合的结论不再可用",400);
   const ms=Math.min(Date.parse(job.deadline_at)-Date.parse(s.now()),job.mono_deadline-performance.now());
   // 409/429 are retried by OpenAI-compatible clients; a finished job is terminal.
     if(ms<=0)throw new AppError("MODEL_JOB_EXPIRED","模型作业已到期限，不再发起子调用",400);

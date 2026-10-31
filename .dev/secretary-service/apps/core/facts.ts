@@ -286,6 +286,21 @@ export function appendFactTo(
       canonicalJson(fact.scope) === canonicalJson(scope) && fact.content === content,
   );
   if (duplicate && !target) return current;
+  // Same subject and scope with a different statement is a conflict, not a newer
+  // truth: time alone must not decide. Both stay out of retrieval until resolved.
+  // Only an explicit subject defines the attribute being compared; the默认
+  // "preference" bucket is just "unspecified", so unrelated preferences must not
+  // be turned into conflicts with each other.
+  const comparableSubject = subject !== "preference";
+  const rivals = !comparableSubject
+    ? []
+    : current.facts.filter(
+    (fact) =>
+      fact.status === "active" &&
+      fact.subject === subject &&
+      canonicalJson(fact.scope) === canonicalJson(scope) &&
+      fact.content !== content,
+  );
 
   const created: Fact = {
     id: id("fact"),
@@ -297,7 +312,7 @@ export function appendFactTo(
     source: { ...source, excerpt: source.excerpt?.slice(0, 120) },
     valid_from: now,
     valid_until: draft.valid_until ?? null,
-    status: "active",
+    status: target ? "active" : rivals.length ? "conflicted" : "active",
     supersedes: target ? [target.id] : [],
     superseded_by: null,
     retention_reason: kind === "imported_unverified" ? "imported_material" : "explicit_user_statement",
@@ -306,18 +321,33 @@ export function appendFactTo(
     created_at: now,
     updated_at: now,
   };
-  const facts = current.facts.map((fact) =>
-    target && fact.id === target.id
-      ? {
-          ...fact,
-          status: "superseded" as const,
-          superseded_by: created.id,
-          valid_until: now,
-          version: fact.version + 1,
-          updated_at: now,
-        }
-      : fact,
-  );
+  const facts = current.facts.map((fact) => {
+    const sameKey =
+      fact.subject === subject && canonicalJson(fact.scope) === canonicalJson(scope);
+    if (target && fact.id === target.id)
+      return {
+        ...fact,
+        status: "superseded" as const,
+        superseded_by: created.id,
+        valid_until: now,
+        version: fact.version + 1,
+        updated_at: now,
+      };
+    // Confirming the same statement again retires the duplicate, whichever copy
+    // the person pointed at.
+    if (sameKey && fact.content === content && ["active", "conflicted"].includes(fact.status))
+      return {
+        ...fact,
+        status: "superseded" as const,
+        superseded_by: created.id,
+        valid_until: now,
+        version: fact.version + 1,
+        updated_at: now,
+      };
+    if (!target && rivals.some((rival) => rival.id === fact.id))
+      return { ...fact, status: "conflicted" as const, version: fact.version + 1, updated_at: now };
+    return fact;
+  });
   facts.push(created);
   return { schema_version: 1, revision: current.revision + 1, updated_at: now, facts };
 }
@@ -362,7 +392,21 @@ export function searchFacts(
     ...new Set((query.toLowerCase().match(/[a-z0-9_-]{2,}|[\u4e00-\u9fff]{2}/g) ?? [])),
   ];
   // Match first, page second: paging a truncated array silently hides the tail.
-  const matchedFacts = activeFacts(store, now).filter(
+  // A scope named in the question narrows the candidate set; otherwise "global"
+  // facts and every scope compete equally. Keywords only choose candidates.
+  //
+  // Only a scope the person actually names narrows the set; an ordinary question
+  // must not hide facts just because their scope label is not in the sentence.
+  const tokens = new Set(
+    (query.toLowerCase().match(/[\u4e00-\u9fff]{2,}|[a-z]{2,}/g) ?? []).map((x) => x),
+  );
+  const candidates = activeFacts(store, now);
+  const known = new Set(candidates.flatMap((fact) => fact.scope).map((x) => x.toLowerCase()).filter((x) => x !== "global"));
+  const namedScopes = new Set([...known].filter((scope) => tokens.has(scope)));
+  const pickScope = (fact: { scope: string[] }) =>
+    !namedScopes.size ||
+    fact.scope.some((scope) => scope === "global" || namedScopes.has(scope.toLowerCase()));
+  const matchedFacts = candidates.filter(pickScope).filter(
     (fact) =>
       (includeUnverified || fact.kind !== "imported_unverified") &&
       (!terms.length ||
@@ -421,4 +465,15 @@ export function markFactsUsed(store: Store, factIds: string[], eventId: string, 
   file.updated_at = now;
   atomicWrite(store.files.resolve(FACTS_PATH, "internal"), serialize(validateFactFile(file)));
   return touched;
+}
+
+/** Unresolved disagreements, without content: what the model must ask about. */
+export function factConflicts(store: Store) {
+  try {
+    return readFacts(store)
+      .facts.filter((fact) => fact.status === "conflicted")
+      .map((fact) => ({ id: fact.id, version: fact.version, subject: fact.subject, scope: fact.scope }));
+  } catch {
+    return [];
+  }
 }
