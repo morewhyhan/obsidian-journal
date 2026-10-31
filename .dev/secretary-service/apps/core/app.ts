@@ -35,6 +35,8 @@ import {
 import { Scheduler } from "./scheduler.js";
 import { DisconnectedChannel } from "./qq.js";
 import { AstrBotChannel } from "./astrbot-channel.js";
+import type { Channel } from "./scheduler.js";
+import { plainText } from "./plain-text.js";
 import { GitWorker, verifyGitHubPrivate } from "./git.js";
 import { Maintenance } from "./maintenance.js";
 import { AstrBotClient } from "./agent-client.js";
@@ -232,7 +234,7 @@ export async function createApp(options: AppOptions) {
         });
       });
   };
-  const channel =
+  const transport =
     env.SECRETARY_QQ_ENABLED === "1" &&
     env.SECRETARY_ASTRBOT_URL &&
     bridgeToken &&
@@ -244,6 +246,11 @@ export async function createApp(options: AppOptions) {
           cfg.channel.send_timeout_seconds * 1000,
         )
       : new DisconnectedChannel();
+  // One exit: QQ shows text verbatim, so markdown never leaves the box.
+  const channel: Channel = {
+    health: () => transport.health(),
+    send: (message) => transport.send({ ...message, body: plainText(message.body) }),
+  };
   const scheduler = new Scheduler(core, channel, env.SECRETARY_RECIPIENT ?? ""),
     backup = new GitWorker(options.vault, {
       enabled: env.SECRETARY_GIT_ENABLED === "1",
@@ -1266,7 +1273,7 @@ export async function createApp(options: AppOptions) {
     coreStopping: Promise<void> | undefined,
     closing = false;
   if (options.timers !== false) {
-    if (channel instanceof AstrBotChannel) channel.connect();
+    if (transport instanceof AstrBotChannel) transport.connect();
     // Every step of the loop is bounded: one await that never settles would
     // otherwise freeze planning, dispatch, recovery and cleanup together, and
     // the only visible symptom would be "the assistant stopped answering".
@@ -1322,7 +1329,7 @@ export async function createApp(options: AppOptions) {
     closing = true;
     if (modelRetry) clearTimeout(modelRetry);
     if (timer) clearInterval(timer);
-    if (channel instanceof AstrBotChannel) channel.close();
+    if (transport instanceof AstrBotChannel) transport.close();
     configuredAgent?.close?.();
     await (coreStopping ?? core.stop());
     await cycleTask;
@@ -1341,7 +1348,7 @@ export async function createApp(options: AppOptions) {
     for (const stream of streams) stream.end();
     for (const request of modelRequests) request.abort();
     configuredAgent?.close?.();
-    if (channel instanceof AstrBotChannel) channel.close();
+    if (transport instanceof AstrBotChannel) transport.close();
   });
   return { app, core, store, scheduler, backup, openapi, checkAgent };
 }

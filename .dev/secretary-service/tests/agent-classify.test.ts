@@ -131,6 +131,18 @@ it("C1 the persona keeps sentences short and answers before explainers", () => {
   expect(prompt).toContain("先给答案或结论");
   expect(prompt).toContain("普通回答默认两到四句");
   // The contrast example must stay, it is what actually moves the model.
-  expect(prompt).toContain("反例（不合格）");
+  expect(prompt).toContain("反例（不合格");
   expect(prompt).toContain("正例（合格）");
+});
+
+it("C1 the persona explains plain-text layout and refuses to grade the user", () => {
+  const prompt = fs.readFileSync(
+    path.join(process.cwd(), "resources/prompts/persona.md"),
+    "utf8",
+  );
+  expect(prompt).toContain("## 纯文本排版");
+  expect(prompt).toContain("QQ 不渲染 Markdown");
+  expect(prompt).toContain("不要用 #、**");
+  expect(prompt).toContain("只回答，不评价");
+  expect(prompt).toContain("不点评完成得好不好");
 });
