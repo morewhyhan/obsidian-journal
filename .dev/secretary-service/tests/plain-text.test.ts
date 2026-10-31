@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { plainText } from "../apps/core/plain-text.js";
+import { splitMessages } from "../apps/core/message-split.js";
 
 it("QQ gets plain text: markdown syntax never reaches the chat", () => {
   const input = [
@@ -33,4 +34,23 @@ it("QQ gets plain text: markdown syntax never reaches the chat", () => {
 it("ordinary text survives untouched", () => {
   const text = "今天8点到10点背单词。\n\n午睡还是13点。";
   expect(plainText(text)).toBe(text);
+});
+
+it("a short answer stays one bubble and a long one splits at sentence ends", () => {
+  expect(splitMessages("现在下午五点四十二。")).toEqual(["现在下午五点四十二。"]);
+  const two = splitMessages(
+    "今天背单词那轮没开始，你说先调试我。提醒发过几条，但提醒不算完成。你要是刚做完什么，说一声我记上。",
+    { maxChars: 30 },
+  );
+  // Every character survives, order is kept, and no bubble ends mid-sentence.
+  expect(two.join("")).toBe(
+    "今天背单词那轮没开始，你说先调试我。提醒发过几条，但提醒不算完成。你要是刚做完什么，说一声我记上。",
+  );
+  expect(two.length).toBeGreaterThan(1);
+  for (const bubble of two) expect(bubble.endsWith("。")).toBe(true);
+});
+
+it("a list is sent as one message instead of one bubble per line", () => {
+  const list = "今天还有这些：\n1. 背单词\n2. 午睡\n3. 早睡\n4. 运动";
+  expect(splitMessages(list, { maxChars: 10, maxBubbles: 3 })).toEqual([list]);
 });

@@ -29,6 +29,7 @@ import { policyStamp } from "./tool-effects.js";
 import { reconcileWork, wakeOnFeedback } from "./work-checks.js";
 import { searchFacts, readFacts, appendFactTo, forgetFactTo, cleanupRevokedFragments, factsDigest, activeFacts, scrubLegacyUserNotes } from "./facts.js";
 import { recordFactUsage, applyFactUsage } from "./fact-usage.js";
+import { splitMessages } from "./message-split.js";
 import { publishInterpretation, understoodSeq, validateInterpretation } from "./classification.js";
 import type { RevocationRecord } from "./facts.js";
 import type { FactDraft, FactFile } from "../../packages/contracts/facts.js";
@@ -1867,6 +1868,7 @@ export class Core {
   queueReply(input: Input, text: string) {
     const now = this.store.now();
     const native = this.agent?.executionMode === "tools-v2";
+    const original = text;
     const chunks: string[] = [];
     while (text.length) {
       let end = Math.min(text.length, 1800);
@@ -1874,9 +1876,19 @@ export class Core {
       chunks.push(text.slice(0, end));
       text = text.slice(end);
     }
+    // Native turns send like a person: 1-3 short bubbles, split at sentence ends.
+    // A single over-long paragraph still respects the channel limit below.
+    const bubbles = native
+      ? splitMessages(original, { maxChars: 55, maxBubbles: 3 }).flatMap((bubble) => {
+          if (bubble.length <= 1800) return [bubble];
+          const parts: string[] = [];
+          for (let i = 0; i < bubble.length; i += 1800) parts.push(bubble.slice(i, i + 1800));
+          return parts;
+        })
+      : chunks;
     // The channel may limit passive replies per inbound message. Keep the rest
     // in the existing reply record and continue against a fresh user message.
-    const page = native ? chunks : chunks.slice(0, 4),
+    const page = native ? bubbles : chunks.slice(0, 4),
       consumed = page.reduce((n, s) => n + s.length, 0);
     this.store.db
       .prepare(
