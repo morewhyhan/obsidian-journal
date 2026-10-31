@@ -287,16 +287,9 @@ export class Scheduler {
         (o.checkin_status === "skip" || (this.core.agent && !o.checkin_status))
       )
         continue;
-      // A status check is an idle nudge, not a clock appointment: any contact
-      // (our own proactive message or the user's reply) restarts the interval,
-      // so a morning report 40 minutes ago must not be followed by "what are
-      // you doing" yet.
-      if (
-        o.kind === "automation" &&
-        "kind" in a &&
-        a.kind === "status_check" &&
-        !this.idleNudgeDue(a, now)
-      )
+      // A status check is an idle nudge, not a clock appointment: it is built
+      // below from the last contact, so its fixed slots are never dispatched.
+      if (o.kind === "automation" && "kind" in a && a.kind === "status_check")
         continue;
       const check =
         o.kind === "automation" && "kind" in a && a.kind === "status_check"
@@ -323,6 +316,11 @@ export class Scheduler {
         contactClass: "subscription",
         quietException: o.quiet_exception,
       });
+    }
+    for (const a of r.automations ?? []) {
+      if (a.status !== "active" || a.kind !== "status_check" || !a.schedule) continue;
+      const idle = this.idleCandidate(a, now);
+      if (idle) items.push(idle);
     }
     const available = items
       .filter(
@@ -405,10 +403,40 @@ export class Scheduler {
         a.id.localeCompare(b.id),
     );
   }
-  /** True once the configured silence interval has elapsed since any contact. */
-  private idleNudgeDue(a: Automation, now: string) {
-    const every = (a.schedule?.every_hours ?? 2) * 3600000;
-    return Date.parse(now) - this.lastContactAt() >= every;
+  /**
+   * The nudge instant is "two hours of silence, rounded up to the next full
+   * hour" — not a fixed clock slot. A contact at 08:33 becomes 10:33, which the
+   * person expects to hear at 11:00.
+   */
+  private idleCandidate(a: Automation, now: string): Candidate | null {
+    const schedule = a.schedule!;
+    const every = (schedule.every_hours ?? 2) * 3600000;
+    const dueMs = Math.ceil((this.lastContactAt() + every) / 3600000) * 3600000;
+    if (dueMs > Date.parse(now)) return null;
+    const local = DateTime.fromISO(now, { zone: a.timezone });
+    if (!schedule.weekdays.includes(local.weekday)) return null;
+    const date = local.toISODate()!;
+    if (schedule.starts_on && date < schedule.starts_on) return null;
+    if (schedule.ends_on && date > schedule.ends_on) return null;
+    if (a.skip_dates?.includes(date)) return null;
+    const minuteOfDay = local.hour * 60 + local.minute;
+    const start = Number(schedule.local_start.slice(0, 2)) * 60 + Number(schedule.local_start.slice(3));
+    const end = Number(schedule.local_end.slice(0, 2)) * 60 + Number(schedule.local_end.slice(3));
+    if (minuteOfDay < start || minuteOfDay >= end) return null;
+    const due = new Date(dueMs).toISOString();
+    return {
+      id: "idle:" + a.id + ":" + due,
+      target: { kind: "automation", id: a.id },
+      version: a.version,
+      targetVersion: a.version,
+      start: due,
+      end: new Date(Date.parse(now) + 300000).toISOString(),
+      text: a.body,
+      noticeBody: a.body,
+      due,
+      contactClass: "subscription",
+      quietException: a.quiet_exception,
+    };
   }
 
   private lastContactAt() {

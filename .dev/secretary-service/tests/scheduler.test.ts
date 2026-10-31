@@ -1306,51 +1306,21 @@ it("a paused subscription stays silent until its pause ends, then resumes on its
   expect(t.sent).toHaveLength(1);
 });
 
-it("a status_check waits out quiet hours, and the first allowed slot merges same-minute reminders", async () => {
-  const t = setup("2026-10-24T09:00:00Z"); // 17:00 +08
-  await t.h.run({
-    type: "create_automation",
-    kind: "status_check",
-    title: "状态确认",
-    timezone: "Asia/Shanghai",
-    schedule: { weekdays: [1, 2, 3, 4, 5, 6, 7], starts_on: "2026-10-24", local_start: "06:00", local_end: "22:00", every_hours: 2 },
-  });
-  await t.h.run({
-    type: "create_automation",
-    kind: "recurring",
-    title: "对照周期提醒",
-    body: "到点了",
-    timezone: "Asia/Shanghai",
-    schedule: { weekdays: [1, 2, 3, 4, 5, 6, 7], starts_on: "2026-10-24", local_start: "08:00", local_end: "08:05" },
-  });
-  const tick = async (at: string) => {
-    t.h.setTime(at);
-    await t.h.core.assistant.tick();
-    await t.scheduler.tick();
-  };
-  // 06:00 and 07:59 sit inside the 23:00–08:00 quiet window: nothing is delivered.
-  await tick("2026-10-25T05:58:00+08:00");
-  await tick("2026-10-25T06:00:30+08:00");
-  await tick("2026-10-25T07:59:00+08:00");
-  expect(t.sent).toHaveLength(0);
-  // 08:00 is the first allowed slot; one message carries both same-minute items.
-  await tick("2026-10-25T08:00:30+08:00");
-  expect(t.sent).toHaveLength(1);
-  expect(t.sent[0]).toContain("到点了");
-});
-
-it("a status check is an idle nudge: any recent contact restarts the two-hour interval", async () => {
-  const t = setup("2026-10-24T09:00:00Z"); // 17:00 +08
-  // A morning report at 05:20, then the status check window opens at 06:00.
-  await t.h.run({
-    type: "create_automation",
-    kind: "recurring",
-    title: "早起晨报",
-    body: "早，该起了。",
-    quiet_exception: true,
-    timezone: "Asia/Shanghai",
-    schedule: { weekdays: [1, 2, 3, 4, 5, 6, 7], starts_on: "2026-10-24", local_start: "05:20", local_end: "05:25" },
-  });
+it("an idle nudge due inside the quiet hours waits for the window to open", async () => {
+  const t = setup("2026-10-25T02:00:00Z"); // 10:00 +08, harness clock start
+  const now = t.h.store.now();
+  // Last contact at 22:30 the previous evening; the nudge would land at 00:30,
+  // but the window (06:00-22:00) and quiet hours both keep it until 06:00.
+  t.h.store.db
+    .prepare(
+      "INSERT INTO outbox(id,channel,recipient_ref,dedupe_key,target_refs_json,source_versions_json,metadata_json,message_kind,body,content_hash,scheduled_at,expires_at,counts_as_proactive,created_at,updated_at,status,external_id,sent_at,finished_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    )
+    .run(
+      "quiet-contact", "qq", "owner", "seed:quiet", "[]", "{}", "{}", "receipt",
+      "睡了", "h", "2026-10-24T14:30:00.000Z", "2026-10-24T14:35:00.000Z",
+      1, "2026-10-24T14:30:00.000Z", "2026-10-24T14:30:00.000Z",
+      "sent", "ext-quiet", "2026-10-24T14:30:00.000Z", "2026-10-24T14:30:00.000Z",
+    );
   await t.h.run({
     type: "create_automation",
     kind: "status_check",
@@ -1363,13 +1333,71 @@ it("a status check is an idle nudge: any recent contact restarts the two-hour in
     await t.h.core.assistant.tick();
     await t.scheduler.tick();
   };
-  await tick("2026-10-25T05:20:30+08:00"); // the morning report
-  expect(t.sent).toHaveLength(1);
-  // 40 minutes after that report the nudge must stay silent.
+  await tick("2026-10-25T05:00:00+08:00");
+  expect(t.sent).toHaveLength(0);
+  // The window opens at 06:00 but the quiet hours still cover it.
   await tick("2026-10-25T06:00:30+08:00");
-  expect(t.sent).toHaveLength(1);
-  // Two hours and a bit later silence qualifies; the next check point delivers it.
+  await tick("2026-10-25T07:59:00+08:00");
+  expect(t.sent).toHaveLength(0);
+  // Only the end of the quiet hours lets the same nudge through.
   await tick("2026-10-25T08:00:30+08:00");
-  expect(t.sent).toHaveLength(2);
-  expect(t.sent[1]).toContain("方便时回一句");
+  expect(t.sent).toHaveLength(1);
+  expect(t.sent[0]).toContain("方便时回一句");
 });
+
+
+it("a status check waits two hours of silence and then the next full hour", async () => {
+  const t = setup("2026-10-25T00:30:00Z"); // 08:30 +08
+  // The last thing the person heard from us was at 08:33.
+  const now = t.h.store.now();
+  t.h.store.db
+    .prepare(
+      "INSERT INTO outbox(id,channel,recipient_ref,dedupe_key,target_refs_json,source_versions_json,metadata_json,message_kind,body,content_hash,scheduled_at,expires_at,counts_as_proactive,created_at,updated_at,status,external_id,sent_at,finished_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    )
+    .run(
+      "last-contact",
+      "qq",
+      "owner",
+      "seed:contact",
+      "[]",
+      "{}",
+      "{}",
+      "receipt",
+      "到点了",
+      "h",
+      now,
+      now,
+      1,
+      "2026-10-25T00:33:00.000Z",
+      "2026-10-25T00:33:00.000Z",
+      "sent",
+      "ext-seed",
+      "2026-10-25T00:33:00.000Z",
+      "2026-10-25T00:33:00.000Z",
+    );
+  const status = await t.h.run({
+    type: "create_automation",
+    kind: "status_check",
+    title: "确认在做什么",
+    timezone: "Asia/Shanghai",
+    schedule: { weekdays: [1, 2, 3, 4, 5, 6, 7], starts_on: "2026-10-24", local_start: "06:00", local_end: "22:00", every_hours: 2 },
+  });
+  expect(status.updated_ids).toHaveLength(1);
+  const tick = async (at: string) => {
+    t.h.setTime(at);
+    await t.h.core.assistant.tick();
+    await t.scheduler.tick();
+  };
+  const baseline = t.sent.length;
+  // 08:33 + 2h = 10:33, so 09:00, 10:00 and 10:33 stay silent...
+  await tick("2026-10-25T09:00:30+08:00");
+  await tick("2026-10-25T10:00:30+08:00");
+  await tick("2026-10-25T10:33:00+08:00");
+  expect(t.sent.length).toBe(baseline);
+  // ...and the next full hour is when the person hears from us.
+  await tick("2026-10-25T11:00:30+08:00");
+  expect(t.sent.length).toBe(baseline + 1);
+  expect(t.sent[t.sent.length - 1]).toContain("方便时回一句");
+});
+
+
