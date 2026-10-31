@@ -162,3 +162,11 @@ it("a finished model job is not retryable by the provider client", async () => {
   expect(budget).toContain('"MODEL_JOB_CALL_LIMIT","本作业模型调用已达上限",400');
   expect(job).not.toContain('"MODEL_JOB_EXPIRED","模型作业已到期限，不再发起子调用",409');
 });
+
+it("a zero daily cap means unlimited, not zero allowance", async () => {
+  const { readFileSync } = await import("node:fs");
+  const budget = readFileSync(new URL("../apps/core/model-budget.ts", import.meta.url), "utf8");
+  // The cap is opt-in: an owner who sets 0 must still get real answers.
+  expect(budget).toContain("c.daily_requests > 0");
+  expect(budget).toContain("c.daily_tokens > 0");
+});

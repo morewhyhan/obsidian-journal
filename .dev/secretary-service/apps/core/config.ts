@@ -109,8 +109,13 @@ export function loadConfig(vault: string) {
     merge(cfg, override);
   }
   validatePlanningSettings(cfg.planning);
-  for(const [key,value] of Object.entries(cfg.agent.budget))
-    if(!Number.isSafeInteger(value)||value<1||value>10000000)throw new AppError("CONFIG_INVALID","模型预算无效："+key,500);
+  // request_* are hard size limits and must stay positive; daily_* may be 0,
+  // which means "no daily cap" for an owner who does not want one.
+  for (const [key, value] of Object.entries(cfg.agent.budget)) {
+    const minimum = key.startsWith("daily_") ? 0 : 1;
+    if (!Number.isSafeInteger(value) || value < minimum || value > 10000000)
+      throw new AppError("CONFIG_INVALID", "模型预算无效：" + key, 500);
+  }
   if (typeof cfg.tasks.auto_reschedule_flexible_work_blocks !== "boolean")
     throw new AppError("CONFIG_INVALID", "自动改期必须是开关", 500);
   if (

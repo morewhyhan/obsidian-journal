@@ -315,3 +315,21 @@ it("Q7 diagnostics keep bounded aggregates and a later success does not erase re
   const result=log.summary();expect(result.errors).toHaveLength(128);expect(result.error_groups_dropped).toBe(12);
   expect(result.errors[0].count).toBe(2);expect(result.latency.counts.reduce((a,b)=>a+b,0)).toBe(141);
 });
+
+it("A a zero daily cap is accepted as unlimited, while size limits stay positive", () => {
+  const h = setup();
+  const configPath = h.store.files.resolve(".agent/config.json", "internal");
+  const base = fs.existsSync(configPath)
+    ? JSON.parse(fs.readFileSync(configPath, "utf8"))
+    : {};
+  base.agent = {
+    ...(base.agent ?? {}),
+    budget: { request_input_tokens: 65536, request_output_tokens: 4096, daily_requests: 0, daily_tokens: 0 },
+  };
+  atomicWrite(configPath, JSON.stringify(base));
+  expect(loadConfig(h.root).agent.budget).toMatchObject({ daily_requests: 0, daily_tokens: 0 });
+  // A zero size limit is still nonsense and must fail at startup.
+  base.agent.budget.request_input_tokens = 0;
+  atomicWrite(configPath, JSON.stringify(base));
+  expect(() => loadConfig(h.root)).toThrow("模型预算无效");
+});

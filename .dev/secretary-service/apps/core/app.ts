@@ -175,8 +175,8 @@ export async function createApp(options: AppOptions) {
             const exhausted =
               !!budget &&
               budget.date === store.now().slice(0, 10) &&
-              (Number(budget.requests ?? 0) >= cfg.daily_requests ||
-                Number(budget.tokens ?? 0) >= cfg.daily_tokens);
+              ((cfg.daily_requests > 0 && Number(budget.requests ?? 0) >= cfg.daily_requests) ||
+                (cfg.daily_tokens > 0 && Number(budget.tokens ?? 0) >= cfg.daily_tokens));
             const body = exhausted
               ? "今天的模型调用额度用完了，明天 0 点恢复。你这条我记着，恢复后先回你。"
               : "模型暂时连不上，你这条我记着，恢复后先回你。";

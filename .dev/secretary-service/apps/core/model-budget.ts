@@ -37,7 +37,11 @@ export class ModelBudget {
       if(day.blocked)throw new AppError("MODEL_BUDGET_RECONCILE_REQUIRED","提供者用量超出预留依据，需核对后再开放",503);
       if(date<day.date)throw new AppError("CLOCK_UNTRUSTED","预算日期不能回退",503);
       const next=date>day.date ? {date,requests:0,tokens:0}:day;
-      if(!guarded && (next.requests+1>c.daily_requests || next.tokens+reserved>c.daily_tokens))
+      // 0 means "no daily cap": the person running this assistant decides whether
+      // to set a cost ceiling, so an unset cap must never block a real answer.
+      const overRequests = c.daily_requests > 0 && next.requests + 1 > c.daily_requests;
+      const overTokens = c.daily_tokens > 0 && next.tokens + reserved > c.daily_tokens;
+      if(!guarded && (overRequests || overTokens))
         // Terminal for the day: retrying five times only delays the honest failure.
         throw new AppError("MODEL_BUDGET_EXHAUSTED","当日模型额度不足，现有事实和原文提醒保留",400);
       next.requests++;next.tokens+=reserved;
