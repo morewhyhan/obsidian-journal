@@ -151,3 +151,14 @@ it("the model self-test gets a longer leash than a normal turn", () => {
   expect(SELF_TEST_TIMEOUT_MS).toBeGreaterThanOrEqual(45000);
   expect(SELF_TEST_TIMEOUT_MS).toBeLessThanOrEqual(60000);
 });
+
+it("a finished model job is not retryable by the provider client", async () => {
+  // A 409/429 here makes the OpenAI client retry five times against a job that is
+  // already over: the turn times out and the assistant looks dead for minutes.
+  const { readFileSync } = await import("node:fs");
+  const job = readFileSync(new URL("../apps/core/model-job.ts", import.meta.url), "utf8");
+  const budget = readFileSync(new URL("../apps/core/model-budget.ts", import.meta.url), "utf8");
+  expect(job).toContain('"MODEL_JOB_EXPIRED","模型作业已到期限，不再发起子调用",400');
+  expect(budget).toContain('"MODEL_JOB_CALL_LIMIT","本作业模型调用已达上限",400');
+  expect(job).not.toContain('"MODEL_JOB_EXPIRED","模型作业已到期限，不再发起子调用",409');
+});

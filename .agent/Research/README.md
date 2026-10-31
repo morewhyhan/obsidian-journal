@@ -21,6 +21,7 @@
 | --- | --- |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 唯一设计基准：能力、合同、状态、测试、开发顺序和发布门槛 |
 | [DDD.md](DDD.md) | 架构的详细设计补充：模块职责、数据归属、调用关系、异常处理及跨模块验收 |
+| [CONVERSATION.md](CONVERSATION.md) | 对话节奏实施合同：连续输入、分次表达、中途接话、发送检查和验收 |
 | [DECISIONS.md](DECISIONS.md) | 重要选择的背景、取舍，以及问题如何推动设计变化 |
 | 本README | 产品作用、使用范围与阅读入口 |
 

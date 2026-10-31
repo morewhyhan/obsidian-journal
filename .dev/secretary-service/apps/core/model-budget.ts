@@ -24,7 +24,8 @@ export class ModelBudget {
     this.s.db.transaction(()=>{
       const meta=this.s.runtimeMeta();
       if(meta.model_job) {
-        if(meta.model_job.requests>=12)throw new AppError("MODEL_JOB_CALL_LIMIT","本作业模型调用已达上限",429);
+        // Terminal for this job: retrying only burns the user's wait.
+        if(meta.model_job.requests>=12)throw new AppError("MODEL_JOB_CALL_LIMIT","本作业模型调用已达上限",400);
         meta.model_job.requests++;
         this.s.updateRuntimeMeta(m=>({...m,model_job:meta.model_job}));
       }
@@ -37,7 +38,8 @@ export class ModelBudget {
       if(date<day.date)throw new AppError("CLOCK_UNTRUSTED","预算日期不能回退",503);
       const next=date>day.date ? {date,requests:0,tokens:0}:day;
       if(!guarded && (next.requests+1>c.daily_requests || next.tokens+reserved>c.daily_tokens))
-        throw new AppError("MODEL_BUDGET_EXHAUSTED","当日模型额度不足，现有事实和原文提醒保留",429);
+        // Terminal for the day: retrying five times only delays the honest failure.
+        throw new AppError("MODEL_BUDGET_EXHAUSTED","当日模型额度不足，现有事实和原文提醒保留",400);
       next.requests++;next.tokens+=reserved;
       this.s.updateRuntimeMeta(m=>({...m,model_budget:next,...(guarded?{recovery_allowance:{...allowance,requests:allowance.requests+1,tokens:allowance.tokens+reserved}}:{})}));
       this.s.db.prepare("INSERT INTO events(id,dedupe_key,source,kind,payload_json,created_at) VALUES(?,?,'model','model_reservation',?,?)")

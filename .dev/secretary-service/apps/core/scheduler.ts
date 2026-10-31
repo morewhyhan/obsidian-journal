@@ -605,10 +605,13 @@ export class Scheduler {
   close() {
     this.stopped = true;
   }
-  /** One bounded wording call; a missing or slow composer falls back to a status line. */
+  /**
+   * One bounded wording call. A missing, failed or slow composer yields no note at
+   * all: a canned "still working" line is worse than silence, and responsibility
+   * stays visible through the turn's own state.
+   */
   private async progressWording(inputId: string, text: string, threshold: number) {
-    const fallback = "正在办理你刚交代的事，结果出来就告诉你。";
-    if (!this.core.agent?.compose) return fallback;
+    if (!this.core.agent?.compose) return "";
     try {
       const result = await Promise.race([
         this.core.agent.compose({
@@ -625,9 +628,9 @@ export class Scheduler {
         new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000)),
       ]);
       const value = typeof (result as any)?.text === "string" ? (result as any).text.trim() : "";
-      return value && value.length <= 300 ? value : fallback;
+      return value && value.length <= 300 ? value : "";
     } catch {
-      return fallback;
+      return "";
     }
   }
   /** Bounded summary of this turn's real tool results (no note bodies). */
@@ -708,11 +711,24 @@ export class Scheduler {
             )
             .all() as { id: string; channel: string; actor_ref: string; metadata_json: string }[];
           for (const row of slow) {
-            const started = Date.parse(JSON.parse(row.metadata_json).turn_started_at);
+            const meta = JSON.parse(row.metadata_json);
+            const started = Date.parse(meta.turn_started_at);
             if (!Number.isFinite(started) || Date.parse(store.now()) - started < threshold * 1000) continue;
+            // Do not retry a failed wording call on every tick.
+            const attempted = Date.parse(meta.progress_attempted_at ?? "");
+            if (Number.isFinite(attempted) && Date.parse(store.now()) - attempted < 60000) continue;
+            const text = progressTexts.get(row.id) ?? "";
+            if (!text) {
+              store.db
+                .prepare(
+                  "UPDATE inbox SET metadata_json=json_set(metadata_json,'$.progress_attempted_at',?) WHERE id=?",
+                )
+                .run(store.now(), row.id);
+              continue;
+            }
             this.core.queueProgress(
               { id: row.id, channel: row.channel, actor_ref: row.actor_ref, external_id: row.id, text: "", occurred_at: store.now() },
-              progressTexts.get(row.id) ?? "正在办理你刚交代的事，结果出来就告诉你。",
+              text,
             );
           }
         }

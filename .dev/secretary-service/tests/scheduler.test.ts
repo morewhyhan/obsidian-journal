@@ -623,6 +623,7 @@ it("a slow turn gets one progress note before its final answer, and a finished t
       await gate;
       return { action_groups: [], clarification: null, reply_intent: "discussion", discussion: "安排已经理好。" };
     },
+    compose: async () => ({ text: "我先理一下，排好就发你。" }),
   } as any;
   await h.core.receive(answered);
   // Wait until the turn really holds the input (fire-and-forget processing).
@@ -657,11 +658,11 @@ it("a slow turn gets one progress note before its final answer, and a finished t
     .all() as any[];
   expect(rows.map((row) => row.purpose)).toEqual(["progress", "reply"]);
   expect(rows.map((row) => row.seq)).toEqual([0, 1]);
-  expect(sent[0]).toContain("正在办理");
+  expect(sent[0]).toContain("我先理一下");
   expect(sent.at(-1)).toContain("安排已经理好");
 });
 
-it("a slow turn's progress note uses generated wording, with a status line as fallback", async () => {
+it("a slow turn's progress note uses generated wording and stays silent when wording fails", async () => {
   const h = harness("2026-10-23T12:00:00Z");
   cleanups.push(() => h.close());
   const sent: string[] = [];
@@ -738,8 +739,12 @@ it("a slow turn's progress note uses generated wording, with a status line as fa
   const fallback = h.store.db
     .prepare("SELECT body FROM outbox WHERE json_extract(metadata_json,'$.purpose')='progress' AND json_extract(metadata_json,'$.reply_group')=?")
     .all(second.id) as any[];
-  expect(fallback).toHaveLength(1);
-  expect(fallback[0].body).toContain("正在办理");
+  // No composer, no note: a canned "still working" line is not a substitute.
+  expect(fallback).toHaveLength(0);
+  const attempted = JSON.parse(
+    (h.store.db.prepare("SELECT metadata_json FROM inbox WHERE id=?").get(second.id) as any).metadata_json,
+  ).progress_attempted_at;
+  expect(typeof attempted).toBe("string");
   release2();
 });
 

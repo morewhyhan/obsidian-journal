@@ -26,6 +26,7 @@ export function modelDeadline(s:Store,required=false) {
   if(!job && !required)return 125000;
   if(!job || job.generation!==s.generation)throw new AppError("MODEL_JOB_REQUIRED","缺少当前代次的模型作业",403);
   const ms=Math.min(Date.parse(job.deadline_at)-Date.parse(s.now()),job.mono_deadline-performance.now());
-  if(ms<=0)throw new AppError("MODEL_JOB_EXPIRED","模型作业已到期限，不再发起子调用",409);
+  // 409/429 are retried by OpenAI-compatible clients; a finished job is terminal.
+    if(ms<=0)throw new AppError("MODEL_JOB_EXPIRED","模型作业已到期限，不再发起子调用",400);
   return Math.ceil(ms);
 }

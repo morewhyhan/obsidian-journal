@@ -105,3 +105,17 @@ it("Q8 the operator runbook only names status fields that really exist", () => {
   const core = fs.readFileSync(path.join(process.cwd(), "apps/core/core.ts"), "utf8");
   for (const field of ["understood_seq", "uninterpreted_inputs"]) expect(core).toContain(field);
 });
+
+it("C1 the prompt carries the conversation rhythm rules that keep replies natural", () => {
+  const prompt = fs.readFileSync(
+    path.join(process.cwd(), "resources/prompts/workflows.md"),
+    "utf8",
+  );
+  // Answer first, one purpose per message, no canned "still working", no re-asking.
+  expect(prompt).toContain("## 交流节奏");
+  expect(prompt).toContain("先答用户当前问的那件事");
+  expect(prompt).toContain("不为了表示在办而先说");
+  expect(prompt).toContain("不能把没发出的内容当成用户已经看过");
+  expect(prompt).toContain("等了一会儿不等于必须说话");
+  expect(prompt).toContain("用户插话后，先处理新话");
+});
