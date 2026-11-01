@@ -156,3 +156,14 @@ it("C1 the persona picks one block for full answers and bubbles for chat", () =>
   expect(prompt).toContain("什么时候整条发");
   expect(prompt).toContain("闲聊、解释、追问");
 });
+
+it("C1 the persona asks again with variation and praises specifically", () => {
+  const prompt = fs.readFileSync(
+    path.join(process.cwd(), "resources/prompts/persona.md"),
+    "utf8",
+  );
+  expect(prompt).toContain("## 到点了要逼着开始");
+  expect(prompt).toContain("## 做完之后");
+  expect(prompt).toContain("具体的肯定");
+  expect(prompt).toContain("不要用“太棒了”");
+});

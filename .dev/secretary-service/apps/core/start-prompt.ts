@@ -6,16 +6,22 @@ export type FocusPolicy = {
   work_minutes: number;
   break_minutes: number;
   give_up_minutes: number;
+  fast_nags: number;
+  slow_nag_seconds: number;
 };
 
 const POLICY: FocusPolicy = {
   enabled: true,
-  // Two minutes of silence is long enough to notice and short enough to matter.
+  // Two minutes of silence is long enough to notice and short enough to matter;
+  // after three unanswered asks the rhythm slows to five minutes so it nags
+  // without becoming noise.
   nag_seconds: 120,
+  fast_nags: 3,
+  slow_nag_seconds: 300,
   // The ordinary Pomodoro default: 25 minutes of work, then 5 minutes of break.
   work_minutes: 25,
   break_minutes: 5,
-  give_up_minutes: 120,
+  give_up_minutes: 30,
 };
 
 export function focusPolicy(store: Store): FocusPolicy {
@@ -26,6 +32,8 @@ export function focusPolicy(store: Store): FocusPolicy {
     work_minutes: Math.max(1, Number(raw.work_minutes ?? POLICY.work_minutes)),
     break_minutes: Math.max(1, Number(raw.break_minutes ?? POLICY.break_minutes)),
     give_up_minutes: Math.max(5, Number(raw.give_up_minutes ?? POLICY.give_up_minutes)),
+    fast_nags: Math.max(1, Number(raw.fast_nags ?? POLICY.fast_nags)),
+    slow_nag_seconds: Math.max(60, Number(raw.slow_nag_seconds ?? POLICY.slow_nag_seconds)),
   };
 }
 
@@ -79,7 +87,9 @@ export function askStart(
 /** One nag: the same question again, never a new topic. */
 export function repeatAsk(store: Store, row: FocusRow, now: string) {
   const policy = focusPolicy(store);
-  const next = new Date(Date.parse(now) + policy.nag_seconds * 1000).toISOString();
+  // Decay: the first few asks are close together, later ones slow down.
+  const gap = row.attempts < policy.fast_nags ? policy.nag_seconds : policy.slow_nag_seconds;
+  const next = new Date(Date.parse(now) + gap * 1000).toISOString();
   store.db
     .prepare(
       "UPDATE start_prompts SET attempts=attempts+1,next_nag_at=?,updated_at=? WHERE id=?",
@@ -159,4 +169,17 @@ export function answerAsk(store: Store, actorRef: string, now: string) {
   store.db
     .prepare("UPDATE start_prompts SET state='answered',updated_at=? WHERE state='asking' AND actor_ref=?")
     .run(now, actorRef);
+}
+
+/** Rotating, short phrasings: repeating one sentence reads like a machine. */
+export function nagBody(attempts: number, label: string) {
+  const variants = [
+    `到点了，${label}。现在开始吗？`,
+    `还没回我。${label}，现在开始吧？`,
+    `${label}还等着呢，开始吗？`,
+    `我先按你开始了计时——${label}，动起来？`,
+    `${label}，这一轮先做五分钟也算。开始吗？`,
+    `别拖了，${label}。现在开始？`,
+  ];
+  return variants[attempts % variants.length];
 }

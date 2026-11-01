@@ -7,7 +7,7 @@ import type { Core } from "./core.js";
 import { effectivePolicy } from "./policy.js";
 import { followupKey } from "../../packages/domain/followups.js";
 import { planningSettings } from "../../packages/domain/planning.js";
-import { askStart, dueAsks, repeatAsk, giveUpAsk, expiredAsk, focusPolicy } from "./start-prompt.js";
+import { askStart, dueAsks, repeatAsk, giveUpAsk, expiredAsk, focusPolicy, nagBody } from "./start-prompt.js";
 import {
   currentFocus,
   inQuiet,
@@ -674,7 +674,7 @@ export class Scheduler {
         giveUpAsk(store, row, now);
         continue;
       }
-      const body = row.attempts === 0 ? `到点了，${row.label}。开始了吗？` : `还没回我。现在开始吗？`;
+      const body = nagBody(row.attempts, row.label);
       store.db
         .prepare(
           "INSERT OR IGNORE INTO outbox(id,channel,recipient_ref,dedupe_key,target_refs_json,source_versions_json,metadata_json,message_kind,body,content_hash,scheduled_at,expires_at,counts_as_proactive,created_at,updated_at,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",

@@ -1,9 +1,9 @@
 {
   "format": 1,
   "service_version": "0.1.0",
-  "source_commit": "40df39a0b0b69dd97d12609f405d4de2555223dc",
+  "source_commit": "c1302b877b8f74427a85f4f6956ff470865fb8c3",
   "source_commit_is_base_only": true,
-  "source_hash": "sha256:efac93965e79acceb0673a5ac104bd2a60e10c30cdc3ca373b5e092581c914b0",
+  "source_hash": "sha256:13887bf1d4de91fcb9fea8cf3e2eafe8b02f883d7680e6cd2e8d37b8086c1eee",
   "lock_hash": "sha256:a1340b831039fad6ccb59eea32648172911a3773627c3f9113f507112401a651",
   "tools_hash": "sha256:0e8d80b4b19429201233897abdf4b6a9af6a8f2e6236cb87a4c351a5786b128a",
   "plugin_version": "1.0.0",
@@ -163,7 +163,7 @@
     },
     {
       "path": "apps/core/scheduler.ts",
-      "hash": "sha256:acabb08b0f1b245c52e3036889ea877223063679940d063a84ec7b7648d9307a"
+      "hash": "sha256:b63fed46ba62bfa5cd8fdba19aec464122c0e5d0afd6afced118787eba87be75"
     },
     {
       "path": "apps/core/snapshot-backup.ts",
@@ -171,7 +171,7 @@
     },
     {
       "path": "apps/core/start-prompt.ts",
-      "hash": "sha256:fe79869887c403975f85864c70138d230ff274f2b2cc8a62114452ccb41ec731"
+      "hash": "sha256:d223775f81fa4d2ab520db78b0f4cda5b2a15b68dad9f19e61efdfb79a42f37c"
     },
     {
       "path": "apps/core/store.ts",
@@ -343,7 +343,7 @@
     },
     {
       "path": "resources/prompts/persona.md",
-      "hash": "sha256:9dd6792750cfa3dd775995036f4432a912b0ca127a159d71372ee55dec459bef"
+      "hash": "sha256:68481e979890cc2493840a846f09985903cd2ae10ea508a10010b63d468287fe"
     },
     {
       "path": "resources/prompts/system.md",

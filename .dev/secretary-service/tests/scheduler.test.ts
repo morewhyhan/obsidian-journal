@@ -1477,3 +1477,18 @@ it("the scheduler sends one nag per interval and stops after an answer", async (
     scheduler.close();
   }
 });
+
+it("nags start at two minutes, slow to five, and give up after thirty", async () => {
+  const { focusPolicy, nagBody, askStart } = await import("../apps/core/start-prompt.js");
+  const h = setup("2026-10-31T09:00:00Z").h;
+  const policy = focusPolicy(h.store);
+  expect(policy.nag_seconds).toBe(120);
+  expect(policy.fast_nags).toBe(3);
+  expect(policy.slow_nag_seconds).toBe(300);
+  expect(policy.give_up_minutes).toBe(30);
+  const seen = new Set<string>();
+  for (let i = 0; i < 6; i++) seen.add(nagBody(i, "背单词"));
+  // Six asks must not read like the same sentence repeated.
+  expect(seen.size).toBeGreaterThanOrEqual(4);
+  expect(nagBody(0, "背单词")).toContain("背单词");
+});
