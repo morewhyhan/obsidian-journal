@@ -1571,3 +1571,26 @@ it("the scheduler delivers a due promise as a message", async () => {
     scheduler.close();
   }
 });
+
+it("a digest reminder never starts a forcing loop", async () => {
+  const t = setup("2026-11-01T13:00:00Z");
+  const h = t.h;
+  const channel = {
+    health: () => ({ connected: true, lastEventAt: null }),
+    send: async (m: any) => ({ status: "sent" as const, externalId: "e" + m.id }),
+  };
+  const scheduler = new Scheduler(h.core, channel as any, "user");
+  try {
+    // A digest-style proactive message that goes out must not create an ask.
+    const now = h.store.now();
+    h.store.db
+      .prepare(
+        "INSERT INTO outbox(id,channel,recipient_ref,dedupe_key,target_refs_json,source_versions_json,metadata_json,message_kind,body,content_hash,scheduled_at,expires_at,counts_as_proactive,created_at,updated_at,status) VALUES('digest1','qq','user','merged:sha256:abc:initial','[]','{}','{}','initial','这周习惯记录都齐了','h',?,?,1,?,?,'pending')",
+      )
+      .run(now, new Date(Date.parse(now) + 600000).toISOString(), now, now);
+    await scheduler.tick();
+    expect(h.store.db.prepare("SELECT count(*) n FROM start_prompts").get()).toMatchObject({ n: 0 });
+  } finally {
+    scheduler.close();
+  }
+});

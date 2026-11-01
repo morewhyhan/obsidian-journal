@@ -1180,10 +1180,14 @@ export class Scheduler {
         }
         // A reminder that actually went out starts the forcing loop: the person
         // is asked again every couple of minutes until they answer.
+        // Only a reminder for something the person can actually do may start
+        // the forcing loop. A weekly digest ("这周习惯记录都齐了") must never be
+        // turned into "到点了，这周习惯记录都齐了。现在开始吗？".
         if (
           claim.row.counts_as_proactive &&
           typeof claim.row.dedupe_key === "string" &&
-          claim.row.dedupe_key.endsWith(":initial")
+          claim.row.dedupe_key.endsWith(":initial") &&
+          /^(occ|habit|task|plan_)/.test(claim.row.dedupe_key)
         ) {
           try {
             askStart(

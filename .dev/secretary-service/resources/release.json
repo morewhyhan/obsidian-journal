@@ -1,9 +1,9 @@
 {
   "format": 1,
   "service_version": "0.1.0",
-  "source_commit": "f085b1198aa2b5c1d11612894bad0ee7080fa438",
+  "source_commit": "3dd35670ab44a79c2a8781bd38e1e6b20270bcbd",
   "source_commit_is_base_only": true,
-  "source_hash": "sha256:a2c858256622e3881b55776ac27fa442412f12c0dd72c312fd992d6f978c5f56",
+  "source_hash": "sha256:bcf1a62c0de00ba7ec35fa416ed7653e57cedac039d3a9503606a89044b40edc",
   "lock_hash": "sha256:a1340b831039fad6ccb59eea32648172911a3773627c3f9113f507112401a651",
   "tools_hash": "sha256:0e8d80b4b19429201233897abdf4b6a9af6a8f2e6236cb87a4c351a5786b128a",
   "plugin_version": "1.0.0",
@@ -46,6 +46,10 @@
       "hash": "sha256:83c7fda85c7c966e7b92015594c62614cff3df6b72c0e6c4ff5efbbeb9baf2fd"
     },
     {
+      "path": "apps/core/claim-check.ts",
+      "hash": "sha256:5d9ec097155cdbe872f2395d3c61792b724a1f348f61d781c36be3e9fdca1ace"
+    },
+    {
       "path": "apps/core/classification.ts",
       "hash": "sha256:8618f94b90d2d5fd87cfb09e8a540f14fd838a949848b93663274f7d89466d9c"
     },
@@ -79,7 +83,7 @@
     },
     {
       "path": "apps/core/core.ts",
-      "hash": "sha256:4a6462f261dc236802fb2585242397f41232367eeb8989573cde12ad5b6427d7"
+      "hash": "sha256:637137dfde1bf1c00decadd9b2292518fa1a185956ad3634a5d4c8a1f7d7b384"
     },
     {
       "path": "apps/core/deadline.ts",
@@ -167,7 +171,7 @@
     },
     {
       "path": "apps/core/scheduler.ts",
-      "hash": "sha256:ab036a0365b61a26b4059b6a5ed89b03e59380b4f9ccd7fa44ce864ac85b7374"
+      "hash": "sha256:ce25f0d4f13b820619aaff7734ad919bb89a48319dbad500fdc7e775a0ed3b5d"
     },
     {
       "path": "apps/core/snapshot-backup.ts",

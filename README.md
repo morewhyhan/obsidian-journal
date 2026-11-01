@@ -56,7 +56,6 @@ Daily中的`YYYY年`是空白目录展示样例，每周展示多篇日记的位
 笔记模板可独立使用。QQ助理需要单独部署服务、配置模型和账号，并完成机器人登录。
 
 - [助理介绍](.agent/Research/README.md)：产品作用与使用范围。
-- [产品需求](.agent/Research/PRD.md)：目标用户、核心价值、使用流程、MVP范围与验收要求。
 - [架构研究与设计](.agent/Research/ARCHITECTURE-OVERVIEW.md)：为什么需要定制，Harness怎样组织持续协作，以及如何验证和实施改造。
 - [工程架构](.agent/Research/ARCHITECTURE.md)：唯一设计基准、开发顺序与验收要求。
 - [设计决策](.agent/Research/DECISIONS.md)：为什么这样选择、比较过什么，以及问题怎样推动设计变化。

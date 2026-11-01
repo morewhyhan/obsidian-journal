@@ -127,3 +127,14 @@ it("a newer message flags the run and stops its unsent remainder", async () => {
     await h.close();
   }
 });
+
+it("a failed write cannot be reported as done", async () => {
+  const { guardSuccessClaim } = await import("../apps/core/claim-check.js");
+  const failed = guardSuccessClaim("按你说的做了，已经写进周计划里了。", [{ status: "failed" }]);
+  expect(failed.corrected).toBe(true);
+  expect(failed.text).toContain("没有真正写入");
+  const ok = guardSuccessClaim("按你说的做了，已经写进周计划里了。", [{ status: "applied" }]);
+  expect(ok.corrected).toBe(false);
+  // An ordinary sentence with no receipts is left alone.
+  expect(guardSuccessClaim("我记下了。", []).corrected).toBe(false);
+});

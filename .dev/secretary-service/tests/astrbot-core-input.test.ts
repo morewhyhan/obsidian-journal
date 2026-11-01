@@ -212,3 +212,18 @@ it("the scheduled self-test retry also shortens when a message is queued", async
   expect(retry.slice(0, 200)).toContain("pendingInputs()");
   expect(source).not.toContain("agentStatus.consecutive_failures>=3?600000");
 });
+
+it("an empty incoming message is recorded but never runs a turn", async () => {
+  const { harness } = await import("./helpers.js");
+  const h = harness("2026-11-01T09:00:00Z");
+  try {
+    let called = 0;
+    (h.core as any).agent = { executionMode: "tools-v2", interpret: async () => { called++; return { text: "" }; }, compose: async () => ({ text: "" }) };
+    await h.core.receive({ id: "voice1", channel: "qq", actor_ref: "u", external_id: "voice1", text: "   ", occurred_at: h.store.now() } as any);
+    expect(called).toBe(0);
+    const row = h.store.db.prepare("SELECT status,error_code FROM inbox WHERE id='voice1'").get() as any;
+    expect(row).toMatchObject({ status: "ignored", error_code: "EMPTY_INPUT" });
+  } finally {
+    await h.close();
+  }
+});

@@ -32,6 +32,7 @@ import { recordFactUsage, applyFactUsage } from "./fact-usage.js";
 import { splitMessages } from "./message-split.js";
 import { answerAsk } from "./start-prompt.js";
 import { ensurePromisedReminders } from "./promise-guard.js";
+import { guardSuccessClaim } from "./claim-check.js";
 import { publishInterpretation, understoodSeq, validateInterpretation } from "./classification.js";
 import type { RevocationRecord } from "./facts.js";
 import type { FactDraft, FactFile } from "../../packages/contracts/facts.js";
@@ -1599,6 +1600,16 @@ export class Core {
       if(oldHash!==payloadHash)throw new AppError("INPUT_ID_CONFLICT","同一事件标识对应不同内容，未重复执行",409);
       return {id:old.id,duplicate:true};
     }
+    // A voice message or sticker arrives with no text. Running a model turn on
+    // nothing produces nonsense and burns budget; record it and stay quiet.
+    if (!input.text || !input.text.trim()) {
+      this.store.db
+        .prepare(
+          "INSERT INTO inbox(id,channel,actor_ref,external_id,body,metadata_json,status,received_at,occurred_at,processed_at,error_code) VALUES(?,?,?,?,NULL,'{}','ignored',?,?,?,'EMPTY_INPUT')",
+        )
+        .run(input.id, input.channel, input.actor_ref, input.external_id, this.store.now(), input.occurred_at, this.store.now());
+      return { id: input.id, duplicate: false };
+    }
     if (
       Buffer.byteLength(input.text) > this.store.config.channel.max_input_bytes
     ) {
@@ -1873,6 +1884,24 @@ export class Core {
   }
 
   finishInput(input: Input, text: string) {
+    // A failed write must not be reported as done.
+    try {
+      const events = this.store.db
+        .prepare("SELECT payload_json FROM events WHERE input_id=? AND kind='business_tool'")
+        .all(input.id) as { payload_json: string }[];
+      const receipts = events.flatMap((row) => {
+        try {
+          const parsed = JSON.parse(row.payload_json);
+          return (parsed?.result?.results ?? []) as { status?: string }[];
+        } catch {
+          return [];
+        }
+      });
+      const guarded = guardSuccessClaim(text, receipts);
+      if (guarded.corrected) text = guarded.text;
+    } catch {
+      /* the reply still goes out; the guard is best effort */
+    }
     this.store.db
       .prepare(
         "UPDATE inbox SET status='processed',processed_at=?,metadata_json=json_set(metadata_json,'$.reply',?) WHERE id=?",

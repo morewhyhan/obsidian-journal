@@ -19,7 +19,6 @@
 
 | 文档 | 回答什么 |
 | --- | --- |
-| [PRD.md](PRD.md) | 产品定义：服务谁、解决什么问题、怎样使用、MVP范围、产品规则及价值验收 |
 | [ARCHITECTURE-OVERVIEW.md](ARCHITECTURE-OVERVIEW.md) | 架构研究与改造提案：定制化的产品理由、Harness与领域边界、异步执行设计、对照实验与迁移切片 |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 唯一设计基准：能力、合同、状态、测试、开发顺序和发布门槛 |
 | [DDD.md](DDD.md) | 架构的详细设计补充：模块职责、数据归属、调用关系、异常处理及跨模块验收 |
