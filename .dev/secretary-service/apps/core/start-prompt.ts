@@ -166,9 +166,19 @@ export function giveUpAsk(store: Store, row: FocusRow, now: string) {
 
 /** The person answered anything: stop asking. */
 export function answerAsk(store: Store, actorRef: string, now: string) {
-  store.db
-    .prepare("UPDATE start_prompts SET state='answered',updated_at=? WHERE state='asking' AND actor_ref=?")
-    .run(now, actorRef);
+  // The inbox actor is "bot:user" while a prompt records the bare user id, so an
+  // exact match silently never fires — and the person keeps being asked.
+  const rows = store.db
+    .prepare("SELECT id,actor_ref FROM start_prompts WHERE state='asking'")
+    .all() as { id: string; actor_ref: string }[];
+  const mine = rows.filter(
+    (row) =>
+      !row.actor_ref ||
+      row.actor_ref === actorRef ||
+      actorRef.endsWith(":" + row.actor_ref),
+  );
+  const mark = store.db.prepare("UPDATE start_prompts SET state='answered',updated_at=? WHERE id=?");
+  for (const row of mine) mark.run(now, row.id);
 }
 
 /** Rotating, short phrasings: repeating one sentence reads like a machine. */

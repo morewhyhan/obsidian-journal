@@ -1520,3 +1520,13 @@ it("a nag row is not treated as a stale proactive candidate", async () => {
     scheduler.close();
   }
 });
+
+it("an answer from bot:user stops a prompt stored under the bare user id", async () => {
+  const t = setup("2026-10-31T09:00:00Z");
+  const h = t.h;
+  const { askStart, waitingAsks, answerAsk } = await import("../apps/core/start-prompt.js");
+  askStart(h.store, "habit:h1", "背单词", h.store.now(), "2251195275");
+  expect(waitingAsks(h.store)).toHaveLength(1);
+  answerAsk(h.store, "2719684048:2251195275", h.store.now());
+  expect(waitingAsks(h.store)).toHaveLength(0);
+});

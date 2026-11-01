@@ -292,6 +292,24 @@ export class Scheduler {
       // below from the last contact, so its fixed slots are never dispatched.
       if (o.kind === "automation" && "kind" in a && a.kind === "status_check")
         continue;
+      // Someone who just told us what they are doing does not need to be asked
+      // "what are you doing" again ten minutes later.
+      if (
+        o.kind === "automation" &&
+        "kind" in a &&
+        ["status_check", "hourly_checkin"].includes(a.kind) &&
+        (() => {
+          const last = (
+            store.db
+              .prepare(
+                "SELECT max(received_at) AS at FROM inbox WHERE channel<>'coordinator' AND actor_ref<>'assistant'",
+              )
+              .get() as { at: string | null }
+          ).at;
+          return !!last && Date.parse(now) - Date.parse(last) < 30 * 60000;
+        })()
+      )
+        continue;
       const check =
         o.kind === "automation" && "kind" in a && a.kind === "status_check"
           ? this.core.assistant.knownBusy()
