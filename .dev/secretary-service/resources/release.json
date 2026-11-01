@@ -1,9 +1,9 @@
 {
   "format": 1,
   "service_version": "0.1.0",
-  "source_commit": "adc25e05d2d7feaab5ff251fb7c942b63c3ef55e",
+  "source_commit": "40df39a0b0b69dd97d12609f405d4de2555223dc",
   "source_commit_is_base_only": true,
-  "source_hash": "sha256:1be42d0fd3a0408e68679062c7737e41c979ec2e752961a12f492ed2577e4ce8",
+  "source_hash": "sha256:efac93965e79acceb0673a5ac104bd2a60e10c30cdc3ca373b5e092581c914b0",
   "lock_hash": "sha256:a1340b831039fad6ccb59eea32648172911a3773627c3f9113f507112401a651",
   "tools_hash": "sha256:0e8d80b4b19429201233897abdf4b6a9af6a8f2e6236cb87a4c351a5786b128a",
   "plugin_version": "1.0.0",
@@ -79,7 +79,7 @@
     },
     {
       "path": "apps/core/core.ts",
-      "hash": "sha256:5d23351e3f3e2b1de78754bba9387a2ec8f393acdc691d745bd482f544e97d9e"
+      "hash": "sha256:a0d0ad2155f1adda0ca059a76346ea39b1994f098fb03f9fb25c1dc31f79093d"
     },
     {
       "path": "apps/core/deadline.ts",
@@ -163,15 +163,19 @@
     },
     {
       "path": "apps/core/scheduler.ts",
-      "hash": "sha256:ac013d8f84a9ecd88f7c6bae6afa82b29687681cac62c248d33488c3a5fcf2dd"
+      "hash": "sha256:acabb08b0f1b245c52e3036889ea877223063679940d063a84ec7b7648d9307a"
     },
     {
       "path": "apps/core/snapshot-backup.ts",
       "hash": "sha256:5bedaa9f9838cddd151136c1b1a524618d04dc1368dabf4fe06058d9c8cd3e97"
     },
     {
+      "path": "apps/core/start-prompt.ts",
+      "hash": "sha256:fe79869887c403975f85864c70138d230ff274f2b2cc8a62114452ccb41ec731"
+    },
+    {
       "path": "apps/core/store.ts",
-      "hash": "sha256:1c4959b8e6dcb395103c7a74b2596e83d9237920959877bc6a42023b865ff923"
+      "hash": "sha256:708e80e8af07afe6e3048be2cdfc98ba49079f0d0e9e416d7ca8c9103b6e73d9"
     },
     {
       "path": "apps/core/token-counter.ts",
@@ -259,7 +263,7 @@
     },
     {
       "path": "packages/contracts/api.ts",
-      "hash": "sha256:8401fb08a21e8a7bbed3a6b11465f325f8aa65eb826d30eddb13e40e29703c3a"
+      "hash": "sha256:d308553c7fdbc00c32175a1a191d7aca10dd487eaaaeac3c5154650b40605370"
     },
     {
       "path": "packages/contracts/facts.ts",
@@ -339,7 +343,7 @@
     },
     {
       "path": "resources/prompts/persona.md",
-      "hash": "sha256:7c0c17a879c612a93a0bf7e2b3ca9134db01f71297835c1bb61f78a639242d45"
+      "hash": "sha256:9dd6792750cfa3dd775995036f4432a912b0ca127a159d71372ee55dec459bef"
     },
     {
       "path": "resources/prompts/system.md",

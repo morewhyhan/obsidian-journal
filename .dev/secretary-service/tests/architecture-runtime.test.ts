@@ -71,7 +71,7 @@ it("E8 encrypted snapshot restores exact files and five empty operational tables
     expect(restored.config.planning.evening_time).toBe("20:00");
     expect(
       (restored.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as {name:string}[]).map((t) => t.name),
-    ).toEqual(["documents", "events", "fact_usage", "inbox", "outbox", "revocations", "schema_meta"]);
+    ).toEqual(["documents", "events", "fact_usage", "inbox", "outbox", "revocations", "schema_meta", "start_prompts"]);
     // A restored runtime starts with no revocation history of its own.
     expect(restored.db.prepare("SELECT count(*) n FROM revocations").get()).toEqual({ n: 0 });
     expect(restored.db.prepare("SELECT count(*) n FROM inbox").get()).toEqual({n:0});

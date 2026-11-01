@@ -30,6 +30,7 @@ import { reconcileWork, wakeOnFeedback } from "./work-checks.js";
 import { searchFacts, readFacts, appendFactTo, forgetFactTo, cleanupRevokedFragments, factsDigest, activeFacts, scrubLegacyUserNotes, factConflicts } from "./facts.js";
 import { recordFactUsage, applyFactUsage } from "./fact-usage.js";
 import { splitMessages } from "./message-split.js";
+import { answerAsk } from "./start-prompt.js";
 import { publishInterpretation, understoodSeq, validateInterpretation } from "./classification.js";
 import type { RevocationRecord } from "./facts.js";
 import type { FactDraft, FactFile } from "../../packages/contracts/facts.js";
@@ -1656,6 +1657,9 @@ export class Core {
         input.occurred_at,
         seq,
       );
+    // Answering anything ends the forcing loop: no more "are you ready" once the
+    // person has said something, whatever it was.
+    answerAsk(this.store, input.actor_ref, this.store.now());
     // The person just spoke again: whatever part of the previous answer has not
     // left yet is already stale. Sent bubbles stay sent; the rest is cancelled and
     // the new input decides what happens next.

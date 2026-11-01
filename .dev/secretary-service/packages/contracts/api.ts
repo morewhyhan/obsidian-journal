@@ -471,6 +471,7 @@ Object.assign(actionSchema, {
       create_habit: ["title", "min_behavior", "recurrence", "anchor"],
       create_task: ["title", "outcome"],
       report_habit: ["business_date", "status"],
+
       report_event: ["event_key"],
       link_diary: ["path", "label"],
       remember_fact: ["fact"],

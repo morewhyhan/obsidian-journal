@@ -221,6 +221,22 @@ export class Store {
         revoked_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS revocations_target_idx ON revocations(kind, target_id);`);
+
+    // Forcing start: a due item keeps asking until the person answers.
+    this.db.exec(`CREATE TABLE IF NOT EXISTS start_prompts (
+      id TEXT PRIMARY KEY,
+      target_ref TEXT NOT NULL,
+      actor_ref TEXT NOT NULL DEFAULT '',
+      label TEXT NOT NULL,
+      state TEXT NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      next_nag_at TEXT NOT NULL,
+      ends_at TEXT,
+      reason TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS start_prompts_state ON start_prompts(state, next_nag_at)`);
       // Cleanup obligation for a revocation: "done" only after the original chat
       // fragment is cleared, so a receipt can never claim an unverified erase.
       if(!(this.db.pragma("table_info(revocations)") as {name:string}[]).some(c=>c.name==="cleanup_state"))

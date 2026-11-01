@@ -1431,3 +1431,49 @@ it("a queued reply stamped before a revocation is cancelled at delivery", async 
   const row = h.store.db.prepare("SELECT status FROM outbox WHERE id='stale-reply'").get() as any;
   expect(row.status).toBe("cancelled");
 });
+
+it("a start prompt repeats every two minutes and stops the moment the person answers", async () => {
+  const t = setup("2026-10-31T09:00:00Z");
+  const h = t.h;
+  const { askStart, dueAsks, answerAsk, waitingAsks } = await import("../apps/core/start-prompt.js");
+  askStart(h.store, "habit:h1", "背单词", h.store.now(), "user");
+  expect(waitingAsks(h.store)).toHaveLength(1);
+  // Nothing is due before the interval elapses.
+  expect(dueAsks(h.store, new Date(Date.parse(h.store.now()) + 60000).toISOString())).toHaveLength(0);
+  expect(dueAsks(h.store, new Date(Date.parse(h.store.now()) + 121000).toISOString())).toHaveLength(1);
+  answerAsk(h.store, "user", h.store.now());
+  expect(waitingAsks(h.store)).toHaveLength(0);
+});
+
+it("the scheduler sends one nag per interval and stops after an answer", async () => {
+  const t = setup("2026-10-31T09:00:00Z");
+  const h = t.h;
+  const sent: string[] = [];
+  const channel = {
+    health: () => ({ connected: true, lastEventAt: null }),
+    send: async (message: any) => {
+      sent.push(message.body);
+      return { status: "sent" as const, externalId: "e" + sent.length };
+    },
+  };
+  h.core.agent = { executionMode: "tools-v2", interpret: async () => ({ text: "" }), compose: async () => ({ text: "" }) } as any;
+  const scheduler = new Scheduler(h.core, channel as any, "user");
+  try {
+    const { askStart, waitingAsks } = await import("../apps/core/start-prompt.js");
+    const now = h.store.now();
+    askStart(h.store, "habit:h1", "背单词", now, "user");
+    // Move the due time into the past so this tick nags.
+    h.store.db.prepare("UPDATE start_prompts SET next_nag_at=?").run(new Date(Date.parse(now) - 1000).toISOString());
+    await scheduler.tick();
+    await scheduler.tick();
+    const rows = h.store.db
+      .prepare("SELECT body FROM outbox WHERE dedupe_key LIKE 'start:%'")
+      .all() as { body: string }[];
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    expect(rows[0].body).toContain("开始");
+    await h.core.receive({ id: "ans", channel: "qq", actor_ref: "user", external_id: "ans", text: "好，开始", occurred_at: now } as any);
+    expect(waitingAsks(h.store)).toHaveLength(0);
+  } finally {
+    scheduler.close();
+  }
+});

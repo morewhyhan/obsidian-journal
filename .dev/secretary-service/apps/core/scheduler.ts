@@ -7,6 +7,7 @@ import type { Core } from "./core.js";
 import { effectivePolicy } from "./policy.js";
 import { followupKey } from "../../packages/domain/followups.js";
 import { planningSettings } from "../../packages/domain/planning.js";
+import { askStart, dueAsks, repeatAsk, giveUpAsk, expiredAsk, focusPolicy } from "./start-prompt.js";
 import {
   currentFocus,
   inQuiet,
@@ -662,6 +663,44 @@ export class Scheduler {
       reasons,
     };
   }
+  /** Repeat the start question until the person answers, then stop. */
+  async nagStarts() {
+    const store = this.core.store;
+    if (!focusPolicy(store).enabled) return;
+    if (!this.channel.health().connected) return;
+    const now = store.now();
+    for (const row of dueAsks(store, now)) {
+      if (expiredAsk(store, row, now)) {
+        giveUpAsk(store, row, now);
+        continue;
+      }
+      const body = row.attempts === 0 ? `到点了，${row.label}。开始了吗？` : `还没回我。现在开始吗？`;
+      store.db
+        .prepare(
+          "INSERT OR IGNORE INTO outbox(id,channel,recipient_ref,dedupe_key,target_refs_json,source_versions_json,metadata_json,message_kind,body,content_hash,scheduled_at,expires_at,counts_as_proactive,created_at,updated_at,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        )
+        .run(
+          "ask_" + row.id + "_" + row.attempts,
+          "qq",
+          (row as any).actor_ref || "",
+          "start:" + row.id + ":" + row.attempts,
+          "[]",
+          JSON.stringify({ revocation: store.revocationRevision() }),
+          JSON.stringify({ purpose: "start_prompt", start_prompt: row.id }),
+          "follow_up",
+          body,
+          "ask",
+          now,
+          new Date(Date.parse(now) + 3600000).toISOString(),
+          1,
+          now,
+          now,
+          "pending",
+        );
+      repeatAsk(store, row, now);
+    }
+  }
+
   async tick(receiptsOnly = false) {
     if (this.stopped) return;
     // A tick lease expires on its own: a hung dispatch cannot block the loop.
@@ -675,6 +714,7 @@ export class Scheduler {
     const { store } = this.core;
     this.lastTick = store.now();
     try {
+      if (!receiptsOnly) await this.nagStarts();
       if (!receiptsOnly && !this.languageTask) {
         // Dispatch must never wait for a different candidate's model request.
         this.languageTask=this.prepareLanguage().catch(()=>{this.lastError="MESSAGE_GENERATION_FAILED";})
@@ -1071,6 +1111,25 @@ export class Scheduler {
             status: "unknown",
             reason: "CHANNEL_EXCEPTION",
           });
+        }
+        // A reminder that actually went out starts the forcing loop: the person
+        // is asked again every couple of minutes until they answer.
+        if (
+          claim.row.counts_as_proactive &&
+          typeof claim.row.dedupe_key === "string" &&
+          claim.row.dedupe_key.endsWith(":initial")
+        ) {
+          try {
+            askStart(
+              store,
+              claim.row.dedupe_key.replace(/:initial$/, ""),
+              String(claim.row.body ?? "").slice(0, 60),
+              store.now(),
+              claim.row.recipient_ref,
+            );
+          } catch {
+            /* asking is best effort; delivery already happened */
+          }
         }
         return { ...claim, delivery };
       });
