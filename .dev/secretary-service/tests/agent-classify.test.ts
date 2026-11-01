@@ -178,8 +178,10 @@ it("C1 every period review is evidence first, then what to change", () => {
   const prompt = fs.readFileSync(path.join(process.cwd(), "resources/prompts/persona.md"), "utf8");
   expect(prompt).toContain("## 日报周报月报的统一标准");
   expect(prompt).toContain("第一部分：逐条梳理");
-  expect(prompt).toContain("第二部分：下一阶段怎么改");
-  expect(prompt).toContain("有坏影响的");
-  expect(prompt).toContain("有好的影响");
-  expect(prompt).toContain("只描述发生了什么、不给改法，等于没复盘");
+  expect(prompt).toContain("第二部分：下一阶段怎么做");
+  expect(prompt).toContain("周报读这一周每一天的记录");
+  expect(prompt).toContain("月报读这个月每一份周报");
+  expect(prompt).toContain("季报读这个季度每一份月报");
+  // The reasoning stays internal; the message never labels things good or bad.
+  expect(prompt).toContain("也不要在回复里讨论");
 });
