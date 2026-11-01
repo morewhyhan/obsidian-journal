@@ -1563,6 +1563,9 @@ it("the scheduler delivers a due promise as a message", async () => {
     await scheduler.tick();
     await scheduler.tick();
     expect(sent.some((b) => b.includes("到点了"))).toBe(true);
+    // The message must address the real recipient, not an empty string.
+    const row = h.store.db.prepare("SELECT recipient_ref FROM outbox WHERE dedupe_key LIKE 'promise:%'").get() as any;
+    expect(row.recipient_ref).toBe("user");
     expect(h.store.db.prepare("SELECT state FROM promises").get()).toMatchObject({ state: "sent" });
   } finally {
     scheduler.close();

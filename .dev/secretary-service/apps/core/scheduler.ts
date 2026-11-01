@@ -696,7 +696,7 @@ export class Scheduler {
         .run(
           "promise_" + row.id,
           "qq",
-          "",
+          this.recipient,
           "promise:" + row.id,
           "[]",
           JSON.stringify({ revocation: store.revocationRevision() }),
@@ -734,7 +734,7 @@ export class Scheduler {
         .run(
           "ask_" + row.id + "_" + row.attempts,
           "qq",
-          (row as any).actor_ref || "",
+          (row as any).actor_ref || this.recipient,
           "start:" + row.id + ":" + row.attempts,
           "[]",
           JSON.stringify({ revocation: store.revocationRevision() }),
