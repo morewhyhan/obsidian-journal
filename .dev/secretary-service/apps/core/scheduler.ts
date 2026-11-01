@@ -7,7 +7,7 @@ import type { Core } from "./core.js";
 import { effectivePolicy } from "./policy.js";
 import { followupKey } from "../../packages/domain/followups.js";
 import { planningSettings } from "../../packages/domain/planning.js";
-import { askStart, dueAsks, repeatAsk, giveUpAsk, expiredAsk, focusPolicy, nagBody } from "./start-prompt.js";
+import { askStart, dueAsks, repeatAsk, giveUpAsk, expiredAsk, focusPolicy, nagBody, shortLabel } from "./start-prompt.js";
 import {
   currentFocus,
   inQuiet,
@@ -692,7 +692,10 @@ export class Scheduler {
           "ask",
           now,
           new Date(Date.parse(now) + 3600000).toISOString(),
-          1,
+          // Not proactive contact: this answers a prompt already sent, so the
+          // candidate/quiet-hour gates that cancel stale candidates must not
+          // cancel it.
+          0,
           now,
           now,
           "pending",
@@ -1123,7 +1126,7 @@ export class Scheduler {
             askStart(
               store,
               claim.row.dedupe_key.replace(/:initial$/, ""),
-              String(claim.row.body ?? "").slice(0, 60),
+              shortLabel(String(claim.row.body ?? "")),
               store.now(),
               claim.row.recipient_ref,
             );

@@ -173,13 +173,22 @@ export function answerAsk(store: Store, actorRef: string, now: string) {
 
 /** Rotating, short phrasings: repeating one sentence reads like a machine. */
 export function nagBody(attempts: number, label: string) {
+  const short = shortLabel(label);
   const variants = [
-    `到点了，${label}。现在开始吗？`,
-    `还没回我。${label}，现在开始吧？`,
-    `${label}还等着呢，开始吗？`,
-    `我先按你开始了计时——${label}，动起来？`,
-    `${label}，这一轮先做五分钟也算。开始吗？`,
-    `别拖了，${label}。现在开始？`,
+    `到点了，${short}。现在开始吗？`,
+    `还没回我。${short}，现在开始吧？`,
+    `${short}还等着呢，开始吗？`,
+    `我先按你开始了计时——${short}，动起来？`,
+    `${short}，这一轮先做五分钟也算。开始吗？`,
+    `别拖了，${short}。现在开始？`,
   ];
   return variants[attempts % variants.length];
+}
+
+/** A nag must name the thing in a few characters, not quote the whole reminder. */
+export function shortLabel(text: string) {
+  const firstLine = (text.split(/[\r\n]/)[0] ?? "").trim();
+  const beforeColon = firstLine.split(/[：:，,。]/)[0]?.trim() ?? "";
+  const pick = beforeColon.length >= 2 ? beforeColon : firstLine;
+  return pick.slice(0, 12) || "这件事";
 }

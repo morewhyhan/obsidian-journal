@@ -948,6 +948,8 @@ it("S03 unknown delivery consumes budget and is not blindly retried", async () =
 });
 it("S04 definitely failed sends retry at most twice", async () => {
   const t = setup();
+  // This case counts the reminder's own retries, not the forcing-start prompts.
+  (t.h.store.config as any).focus = { enabled: false };
   await t.h.run(habitAction);
   t.setResponse("failed");
   await t.scheduler.tick();
@@ -1491,4 +1493,30 @@ it("nags start at two minutes, slow to five, and give up after thirty", async ()
   // Six asks must not read like the same sentence repeated.
   expect(seen.size).toBeGreaterThanOrEqual(4);
   expect(nagBody(0, "背单词")).toContain("背单词");
+  // A long reminder body must not leak into a nag.
+  expect(nagBody(1, "背单词：10月30日只背了1组，10月31日没开始。")).not.toContain("10月30日");
+});
+
+it("a nag row is not treated as a stale proactive candidate", async () => {
+  const t = setup("2026-10-31T09:00:00Z");
+  const h = t.h;
+  const channel = {
+    health: () => ({ connected: true, lastEventAt: null }),
+    send: async (m: any) => ({ status: "sent" as const, externalId: "e" + m.id }),
+  };
+  h.core.agent = { executionMode: "tools-v2", interpret: async () => ({ text: "" }), compose: async () => ({ text: "" }) } as any;
+  const scheduler = new Scheduler(h.core, channel as any, "user");
+  try {
+    const { askStart, shortLabel } = await import("../apps/core/start-prompt.js");
+    const now = h.store.now();
+    expect(shortLabel("背单词：10月30日只背了1组，10月31日没开始。")).toBe("背单词");
+    askStart(h.store, "habit:h1", shortLabel("背单词：10月30日只背了1组。"), now, "user");
+    h.store.db.prepare("UPDATE start_prompts SET next_nag_at=?").run(new Date(Date.parse(now) - 1000).toISOString());
+    await scheduler.tick();
+    const row = h.store.db.prepare("SELECT status,counts_as_proactive FROM outbox WHERE dedupe_key LIKE 'start:%' LIMIT 1").get() as any;
+    expect(row.counts_as_proactive).toBe(0);
+    expect(row.status).not.toBe("cancelled");
+  } finally {
+    scheduler.close();
+  }
 });
