@@ -173,3 +173,13 @@ it("C1 the persona refuses to promise a reminder that was never created", () => 
   expect(prompt).toContain("## 不要空口承诺时间点");
   expect(prompt).toContain("没建成就不许说具体时间");
 });
+
+it("C1 every period review is evidence first, then what to change", () => {
+  const prompt = fs.readFileSync(path.join(process.cwd(), "resources/prompts/persona.md"), "utf8");
+  expect(prompt).toContain("## 日报周报月报的统一标准");
+  expect(prompt).toContain("第一部分：逐条梳理");
+  expect(prompt).toContain("第二部分：下一阶段怎么改");
+  expect(prompt).toContain("有坏影响的");
+  expect(prompt).toContain("有好的影响");
+  expect(prompt).toContain("只描述发生了什么、不给改法，等于没复盘");
+});
