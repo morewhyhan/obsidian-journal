@@ -1,9 +1,9 @@
 {
   "format": 1,
   "service_version": "0.1.0",
-  "source_commit": "c3483d0eaecfb916c0a4ab22ce6a4a053db866c2",
+  "source_commit": "c18e5f3e41b94eb2f9cbafbe71e447b1c2cd49d6",
   "source_commit_is_base_only": true,
-  "source_hash": "sha256:ff7fd6cab2521467daa60de6ab4290bbe6e06b7dd1f10e91c5ceb9197c0d75e7",
+  "source_hash": "sha256:06f57e23a6cf76cf1fede7147640fc36ce3bdeb819d2a2fccb5b629ded9aa54f",
   "lock_hash": "sha256:a1340b831039fad6ccb59eea32648172911a3773627c3f9113f507112401a651",
   "tools_hash": "sha256:0e8d80b4b19429201233897abdf4b6a9af6a8f2e6236cb87a4c351a5786b128a",
   "plugin_version": "1.0.0",
@@ -79,7 +79,7 @@
     },
     {
       "path": "apps/core/core.ts",
-      "hash": "sha256:a0d0ad2155f1adda0ca059a76346ea39b1994f098fb03f9fb25c1dc31f79093d"
+      "hash": "sha256:4a6462f261dc236802fb2585242397f41232367eeb8989573cde12ad5b6427d7"
     },
     {
       "path": "apps/core/deadline.ts",
@@ -150,6 +150,10 @@
       "hash": "sha256:723ae85663ab2c6f6865af659f2b1e8e7ca77271b64ceda8f0f2356c0304fc0f"
     },
     {
+      "path": "apps/core/promise-guard.ts",
+      "hash": "sha256:e502dbd94c0ba6fabe4c8eee6899fc2ae373e87c4f0def31e406d83ab6d1a27f"
+    },
+    {
       "path": "apps/core/qq.ts",
       "hash": "sha256:5071b7a6454d6b64b69d6eda5f3577cf8340a67470be391767012623ac494d37"
     },
@@ -163,7 +167,7 @@
     },
     {
       "path": "apps/core/scheduler.ts",
-      "hash": "sha256:b9f69c4cb61fcda37ed69ed5b65549e7dce2430c0410a774de336065fce8b436"
+      "hash": "sha256:dea36b64b488fbaf6150ce7eafff928e102f2f6820839e6bc299d367b389824b"
     },
     {
       "path": "apps/core/snapshot-backup.ts",
@@ -175,7 +179,7 @@
     },
     {
       "path": "apps/core/store.ts",
-      "hash": "sha256:708e80e8af07afe6e3048be2cdfc98ba49079f0d0e9e416d7ca8c9103b6e73d9"
+      "hash": "sha256:b7ded3c4d980f78d69dcedfd8a98186c0839222841f2ba435ccc1cc0bf5c4c63"
     },
     {
       "path": "apps/core/token-counter.ts",
@@ -343,7 +347,7 @@
     },
     {
       "path": "resources/prompts/persona.md",
-      "hash": "sha256:68481e979890cc2493840a846f09985903cd2ae10ea508a10010b63d468287fe"
+      "hash": "sha256:e46103f3efd461eb6d0384f7676dc699b3685311a3615061f4850ed6e71c3ae2"
     },
     {
       "path": "resources/prompts/system.md",

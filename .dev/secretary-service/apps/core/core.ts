@@ -31,6 +31,7 @@ import { searchFacts, readFacts, appendFactTo, forgetFactTo, cleanupRevokedFragm
 import { recordFactUsage, applyFactUsage } from "./fact-usage.js";
 import { splitMessages } from "./message-split.js";
 import { answerAsk } from "./start-prompt.js";
+import { ensurePromisedReminders } from "./promise-guard.js";
 import { publishInterpretation, understoodSeq, validateInterpretation } from "./classification.js";
 import type { RevocationRecord } from "./facts.js";
 import type { FactDraft, FactFile } from "../../packages/contracts/facts.js";
@@ -1880,6 +1881,12 @@ export class Core {
     // The running turn still answers the earlier question (both questions deserve
     // an answer); what the new message stops is the unsent remainder, cancelled
     // in receive(). A stale tail must never land after the person moved on.
+    // A promised time must exist as a record, not only in the sentence.
+    try {
+      ensurePromisedReminders(this.store, text, this.store.now(), this.store.config.timezone);
+    } catch {
+      /* the reply still goes out; the promise row is the safety net */
+    }
     if (input.channel === "qq") this.queueReply(input, text);
     this.emit("input_result", {
       id: input.id,

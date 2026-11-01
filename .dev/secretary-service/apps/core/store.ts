@@ -237,6 +237,17 @@ export class Store {
       updated_at TEXT NOT NULL
     )`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS start_prompts_state ON start_prompts(state, next_nag_at)`);
+
+    // A promised reminder becomes a row, so the promise cannot be forgotten.
+    this.db.exec(`CREATE TABLE IF NOT EXISTS promises (
+      id TEXT PRIMARY KEY,
+      at TEXT NOT NULL,
+      body TEXT NOT NULL,
+      state TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS promises_due ON promises(state, at)`);
       // Cleanup obligation for a revocation: "done" only after the original chat
       // fragment is cleared, so a receipt can never claim an unverified erase.
       if(!(this.db.pragma("table_info(revocations)") as {name:string}[]).some(c=>c.name==="cleanup_state"))

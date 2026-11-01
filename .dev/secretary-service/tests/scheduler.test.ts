@@ -1530,3 +1530,41 @@ it("an answer from bot:user stops a prompt stored under the bare user id", async
   answerAsk(h.store, "2719684048:2251195275", h.store.now());
   expect(waitingAsks(h.store)).toHaveLength(0);
 });
+
+it("a promised time becomes a real reminder instead of staying in the sentence", async () => {
+  const t = setup("2026-11-01T01:04:00Z");
+  const h = t.h;
+  const { promisedTimes, ensurePromisedReminders, duePromises } = await import("../apps/core/promise-guard.js");
+  const times = promisedTimes("记下了。歇半小时，九点半我提醒你开下一组。", h.store.now(), "Asia/Shanghai");
+  expect(times).toHaveLength(1);
+  expect(times[0].at).toContain("01:30");
+  ensurePromisedReminders(h.store, "九点半我提醒你开下一组。", h.store.now(), "Asia/Shanghai");
+  expect(h.store.db.prepare("SELECT count(*) n FROM promises").get()).toMatchObject({ n: 1 });
+  // A second promise at the same minute must not duplicate the row.
+  ensurePromisedReminders(h.store, "九点半我提醒你开下一组。", h.store.now(), "Asia/Shanghai");
+  expect(h.store.db.prepare("SELECT count(*) n FROM promises").get()).toMatchObject({ n: 1 });
+  expect(duePromises(h.store, new Date(Date.parse(h.store.now()) + 30 * 60000).toISOString())).toHaveLength(1);
+});
+
+it("the scheduler delivers a due promise as a message", async () => {
+  const t = setup("2026-11-01T01:29:00Z");
+  const h = t.h;
+  const sent: string[] = [];
+  h.core.agent = { executionMode: "tools-v2", interpret: async () => ({ text: "" }), compose: async () => ({ text: "" }) } as any;
+  const channel = {
+    health: () => ({ connected: true, lastEventAt: null }),
+    send: async (m: any) => { sent.push(m.body); return { status: "sent" as const, externalId: "e" + m.id }; },
+  };
+  const scheduler = new Scheduler(h.core, channel as any, "user");
+  try {
+    const { ensurePromisedReminders } = await import("../apps/core/promise-guard.js");
+    ensurePromisedReminders(h.store, "九点半我提醒你开下一组。", "2026-11-01T01:04:00Z", "Asia/Shanghai");
+    t.h.advance(31 * 60000);
+    await scheduler.tick();
+    await scheduler.tick();
+    expect(sent.some((b) => b.includes("到点了"))).toBe(true);
+    expect(h.store.db.prepare("SELECT state FROM promises").get()).toMatchObject({ state: "sent" });
+  } finally {
+    scheduler.close();
+  }
+});

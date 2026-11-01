@@ -167,3 +167,9 @@ it("C1 the persona asks again with variation and praises specifically", () => {
   expect(prompt).toContain("具体的肯定");
   expect(prompt).toContain("不要用“太棒了”");
 });
+
+it("C1 the persona refuses to promise a reminder that was never created", () => {
+  const prompt = fs.readFileSync(path.join(process.cwd(), "resources/prompts/persona.md"), "utf8");
+  expect(prompt).toContain("## 不要空口承诺时间点");
+  expect(prompt).toContain("没建成就不许说具体时间");
+});

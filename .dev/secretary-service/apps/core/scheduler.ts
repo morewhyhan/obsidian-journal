@@ -8,6 +8,7 @@ import { effectivePolicy } from "./policy.js";
 import { followupKey } from "../../packages/domain/followups.js";
 import { planningSettings } from "../../packages/domain/planning.js";
 import { askStart, dueAsks, repeatAsk, giveUpAsk, expiredAsk, focusPolicy, nagBody, shortLabel } from "./start-prompt.js";
+import { duePromises, settlePromise } from "./promise-guard.js";
 import {
   currentFocus,
   inQuiet,
@@ -681,6 +682,39 @@ export class Scheduler {
       reasons,
     };
   }
+  /** A time the assistant promised in words becomes a real message here. */
+  async sendPromises() {
+    const store = this.core.store;
+    if (!this.channel.health().connected) return;
+    const now = store.now();
+    for (const row of duePromises(store, now)) {
+      const body = "到点了。按刚才说的，我来问一句：开始了吗？";
+      store.db
+        .prepare(
+          "INSERT OR IGNORE INTO outbox(id,channel,recipient_ref,dedupe_key,target_refs_json,source_versions_json,metadata_json,message_kind,body,content_hash,scheduled_at,expires_at,counts_as_proactive,created_at,updated_at,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        )
+        .run(
+          "promise_" + row.id,
+          "qq",
+          "",
+          "promise:" + row.id,
+          "[]",
+          JSON.stringify({ revocation: store.revocationRevision() }),
+          JSON.stringify({ purpose: "promise" }),
+          "follow_up",
+          body,
+          "promise",
+          now,
+          new Date(Date.parse(now) + 3600000).toISOString(),
+          0,
+          now,
+          now,
+          "pending",
+        );
+      settlePromise(store, row.id, now);
+    }
+  }
+
   /** Repeat the start question until the person answers, then stop. */
   async nagStarts() {
     const store = this.core.store;
@@ -736,6 +770,7 @@ export class Scheduler {
     this.lastTick = store.now();
     try {
       if (!receiptsOnly) await this.nagStarts();
+      if (!receiptsOnly) await this.sendPromises();
       if (!receiptsOnly && !this.languageTask) {
         // Dispatch must never wait for a different candidate's model request.
         this.languageTask=this.prepareLanguage().catch(()=>{this.lastError="MESSAGE_GENERATION_FAILED";})
@@ -1030,7 +1065,17 @@ export class Scheduler {
               }
               if (this.core.agent?.executionMode === "tools-v2") {
                 const currentText = this.literal(candidate) ?? this.language.get(this.languageKey(candidate, row.message_kind === "follow_up"));
-                if (!currentText || row.body !== currentText) continue;
+                if (!currentText || row.body !== currentText) {
+                  // A queued body whose source text no longer matches would wait
+                  // forever and block the queue head; after ten minutes it is
+                  // stale, not "about to be regenerated".
+                  if (Date.parse(store.now()) - Date.parse(row.created_at) > 600000) {
+                    store.db
+                      .prepare("UPDATE outbox SET status='cancelled',finished_at=?,updated_at=?,metadata_json=json_set(metadata_json,'$.cancel_reason','STALE_TEXT') WHERE id=?")
+                      .run(store.now(), store.now(), row.id);
+                  }
+                  continue;
+                }
               }
               const cap =
                 candidate.members ||
