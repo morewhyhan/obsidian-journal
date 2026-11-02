@@ -759,6 +759,27 @@ it("T13/T15 changing input during model planning invalidates the draft instead o
   expect(h.store.registry().proposals).toHaveLength(0);
   expect(h.store.day("2026-10-27").assistance?.status).toBe("superseded");
 });
+it("evening advice renews an earlier daytime planning notice and creates the daily parent chain", async () => {
+  const { h } = setup("2026-10-26T12:00:00Z");
+  await h.run({ type: "plan_day", business_date: "2026-10-27" });
+  h.store.commit("daytime-reply-shown", "test", "test", (_r, load) => {
+    load("2026-10-27").planning!.notice.expires_at = h.store.now();
+    return { ids: [], message: "daytime advice already shown" };
+  });
+  h.setTime("2026-10-26T13:00:00Z");
+  h.core.agent = {
+    interpret: async () => ({ action_groups: [], clarification: null, reply_intent: "discussion", discussion: "明天先接着读英语。" }),
+  };
+  h.core.assistant.startPlanning();
+  await h.core.assistant.drain();
+  const notice = h.store.day("2026-10-27").planning!.notice;
+  expect(notice.kind).toBe("night");
+  expect(notice.expires_at > h.store.now()).toBe(true);
+  expect(h.core.coordinator.notices().some(item => item.date === "2026-10-27")).toBe(true);
+  for (const kind of ["yearly", "quarterly", "monthly", "weekly", "daily"] as const)
+    expect(h.store.files.read(route(kind, "2026-10-27"))).not.toContain("<%");
+});
+
 it("T32 model failures retry at most once while preserving existing schedules", async () => {
   const { h } = setup("2026-10-26T13:00:00Z");
   let calls = 0;

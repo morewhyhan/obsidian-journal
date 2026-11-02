@@ -10,7 +10,7 @@ type Query={operation:string;scope?:string;query?:string;ids?:string[];date?:str
 type Stamp={key:string;query?:Query;path?:string;resource?:{operation:"list"|"search";prefix:string};digest:string};
 const queries=["state","followups","rules","planning","planning_context","preferences","automations","focus","board","day"];
 function select(r:Registry,q:Query) {
-  const scopes=q.scope && q.scope!=="all"?[q.scope]:["tasks","habits","plans","controls","proposals"];
+  const scopes=q.scope && q.scope!=="all"?[q.scope]:["goals","tasks","habits","plans","controls","proposals"];
   let all:any[]=q.operation==="followups" ? r.followups??[] : q.operation==="rules"?r.user_rules??[]:
     scopes.flatMap(k=>(r as any)[k]??[]);
   return all.filter(x=>(!q.ids?.length || q.ids.includes(x.id) || q.ids.includes(x.issue?.task_id??x.issue?.habit_id)) &&
@@ -32,7 +32,7 @@ function digest(s:Store,r:Registry,stamp:Stamp) {
   const q=stamp.query!;
   if(q.operation==="day")return hash(canonicalJson(s.day(q.date!)));
   if(!["state","followups","rules"].includes(q.operation))return hash(canonicalJson({
-    tasks:r.tasks,habits:r.habits,plans:r.plans,controls:r.controls,proposals:r.proposals,
+    goals:r.goals,tasks:r.tasks,habits:r.habits,plans:r.plans,controls:r.controls,proposals:r.proposals,
     rules:r.user_rules??[],automations:r.automations??[],followups:r.followups??[],focus:r.focus_date,
     planning:r.planning_preferences,rules_revision:r.rules_revision??0,planning_version:r.planning_version??0,
     facts:factsDigest(s),day:s.day(q.date!)}));

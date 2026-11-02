@@ -373,11 +373,15 @@ export class AssistantRuntime {
       automations: autos,
       focus: focus ?? null,
       objects: [
+        ...r.goals,
         ...(r.user_rules ?? []),
         ...autos,
         ...(focus ? [focus] : []),
       ].map((x) => ({ id: x.id, version: x.version })),
       board: {
+        goals: r.goals
+          .filter((g) => ["proposed", "active", "paused"].includes(g.status))
+          .slice(0, 5),
         now: live.filter((p) => p.window_start <= now).slice(0, 3),
         next: live
           .filter((p) => p.window_start > now)
@@ -1115,7 +1119,7 @@ export class AssistantRuntime {
     const task = r.tasks.find((t) => t.id === item.issue.task_id),
       habit = r.habits.find((h) => h.id === item.issue.habit_id);
     const date = DateTime.fromISO(now).setZone(s.config.timezone).toISODate()!;
-    const job = "support:" + hash(key).slice(0, 24) + ":" + attempt;
+    const job = "support:" + hash(key).slice(0, 24) + ":" + attempt + (item.analysis?.status === "superseded" ? ":" + id("resume") : "");
     const input: Input = {
       id: job,
       external_id: job,
@@ -1537,10 +1541,17 @@ export class AssistantRuntime {
         this.core.cancelInvalidContact();
         this.lastError = null;
       });
-    } catch {
+    } catch (error) {
       await s.exclusive(() => {
         s.commit(job + ":failed", "coordinator", job, (reg, load) => {
           const f = reg.followups?.find((f) => f.id === item.id);
+          if (error instanceof AppError && error.code === "BACKGROUND_PREEMPTED") {
+            if (f?.analysis?.fingerprint === key) {
+              f.analysis.status = "superseded";
+              f.analysis.attempts = Math.max(0, attempt - 1);
+            }
+            return { ids: [], message: "先回应用户，原跟进责任保留待续" };
+          }
           if (f?.analysis?.fingerprint === key) f.analysis.status = "failed";
           if (f && !checkin && attempt >= 2)
             f.next_check_at = DateTime.fromISO(s.now())
@@ -1572,7 +1583,7 @@ export class AssistantRuntime {
           )
           .run(s.now(), job);
       });
-      this.lastError = "SUPPORT_FAILED";
+      this.lastError = error instanceof AppError && error.code === "BACKGROUND_PREEMPTED" ? null : "SUPPORT_FAILED";
     }
   }
   private goalChain(taskId?: string) {
@@ -1580,9 +1591,40 @@ export class AssistantRuntime {
       seen = new Set<string>(),
       chain = [];
     let t = r.tasks.find((t) => t.id === taskId);
+    // M0 is the directional root. Parent tasks remain a local execution
+    // hierarchy; they no longer masquerade as the user's actual goal.
+    const root = t?.goal_id ? r.goals.find((g) => g.id === t!.goal_id) : undefined;
+    if (root) {
+      seen.add(root.id);
+      chain.push({
+        kind: "goal",
+        id: root.id,
+        title: root.title,
+        problem: root.problem.slice(0, 500),
+        desired_outcome: root.desired_outcome.slice(0, 500),
+        acceptance: root.acceptance.slice(0, 8),
+        status: root.status,
+        version: root.version,
+      });
+      if (t?.milestone_id) {
+        const milestone = root.milestones.find((item) => item.id === t!.milestone_id);
+        if (milestone) {
+          seen.add(milestone.id);
+          chain.push({
+            kind: "milestone",
+            id: milestone.id,
+            outcome: milestone.outcome.slice(0, 500),
+            acceptance: milestone.acceptance.slice(0, 8),
+            status: milestone.status,
+            version: milestone.version,
+          });
+        }
+      }
+    }
     while (t && !seen.has(t.id) && chain.length < 8) {
       seen.add(t.id);
       chain.push({
+        kind: "task",
         id: t.id,
         title: t.title,
         outcome: t.outcome.slice(0, 500),
@@ -1635,7 +1677,7 @@ export class AssistantRuntime {
         ":" +
         (previous?.request_id ?? "auto") +
         ":" +
-        attempt;
+        attempt + (previous?.status === "superseded" ? ":" + id("resume") : "");
     const input: Input = {
       id: job,
       channel: "coordinator",
@@ -1832,6 +1874,9 @@ export class AssistantRuntime {
               jobState.summary +
               (actions.length ? " 变更已列为待决定，现有安排照常。" : "");
             d.planning.notice.starts_at = s.now();
+            d.planning.notice.expires_at = local.plus({ days: 1 }).startOf("day").toUTC().toISO()!;
+            d.planning.notice.kind = "night";
+            d.planning.notice.key = "night:" + date + ":daily";
           }
           return { ids: [], message: "规划建议已核对" };
         });
@@ -1853,8 +1898,8 @@ export class AssistantRuntime {
           )
             return { ids: [], message: "旧作业已结束，新规划请求保留" };
           load(date).assistance = {
-            status: "failed",
-            attempts: attempt,
+            status: error instanceof AppError && error.code === "BACKGROUND_PREEMPTED" ? "superseded" : "failed",
+            attempts: error instanceof AppError && error.code === "BACKGROUND_PREEMPTED" ? Math.max(0, attempt - 1) : attempt,
             request_id: previous?.request_id,
             attempted_at: now,
             revision: currentRevision,
@@ -1874,7 +1919,7 @@ export class AssistantRuntime {
           )
           .run(s.now(), job);
       });
-      this.lastError = "PLANNING_MODEL_FAILED";
+      this.lastError = error instanceof AppError && error.code === "BACKGROUND_PREEMPTED" ? null : "PLANNING_MODEL_FAILED";
     }
   }
 }

@@ -3,6 +3,8 @@
 /.tmp/
 # Session scratch scripts
 /.dev/work/
+# Upstream developer snapshots; project adapter lives in .agent/pstack/
+/.agent/vendor/
 .DS_Store
 Thumbs.db
 desktop.ini

@@ -62,7 +62,7 @@ it("as many bubbles as the content needs, one sentence each", () => {
   expect(all.join("")).toBe(text);
 });
 
-it("a new message cancels the previous answer's unsent bubbles", async () => {
+it("receiving a new message preserves an earlier reply until its relation is understood", async () => {
   const { harness } = await import("./helpers.js");
   const h = harness("2026-10-31T10:00:00Z");
   try {
@@ -74,7 +74,7 @@ it("a new message cancels the previous answer's unsent bubbles", async () => {
       .run("b1", "qq", "owner", "old:reply", "[]", "{}", JSON.stringify({ reply_group: "old", sequence: 1, purpose: "reply" }), "receipt", "第一句。", "h", now, now, 0, now, now, "pending");
     await h.core.receive({ id: "new-input", channel: "qq", actor_ref: "owner", external_id: "new-input", text: "等等，不是这个", occurred_at: now, reply_to: null } as any);
     const row = h.store.db.prepare("SELECT status FROM outbox WHERE id='b1'").get() as any;
-    expect(row.status).toBe("cancelled");
+    expect(row.status).toBe("pending");
   } finally {
     await h.close();
   }

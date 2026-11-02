@@ -14,6 +14,8 @@ export function cleanup(store: Store) {
   if(store.time.read().trusted)store.updateRuntimeMeta(meta=>({...meta,replay_floor:new Date(Math.max(
     Date.parse(meta.replay_floor??"1970-01-01T00:00:00Z"),Date.parse(now)-store.config.channel.accept_window_seconds*1000)).toISOString()}));
   store.db.transaction(() => {
+    const received = (store.db.prepare("SELECT COALESCE(MAX(seq),0) n FROM inbox WHERE channel<>'coordinator'").get() as { n: number }).n;
+    store.updateRuntimeMeta(meta => ({ ...meta, received_seq: Math.max(Number(meta.received_seq ?? 0), received) }));
     store.db
       .prepare(
         "UPDATE outbox SET status='abandoned',finished_at=?,updated_at=? WHERE status IN ('unknown','failed') AND expires_at<?",
@@ -34,6 +36,9 @@ export function cleanup(store: Store) {
         "DELETE FROM inbox WHERE status IN ('processed','failed','ignored') AND processed_at<?",
       )
       .run(ago(r.inbox_terminal_days)).changes;
+    removed += store.db.prepare(
+      "DELETE FROM fact_usage WHERE applied=1 AND at<? AND NOT EXISTS(SELECT 1 FROM inbox WHERE id=fact_usage.event_id AND status IN ('pending','processing')) AND NOT EXISTS(SELECT 1 FROM events WHERE id=fact_usage.event_id AND status IN ('prepared','conflict'))",
+    ).run(ago(Math.max(r.events_completed_days, r.inbox_terminal_days))).changes;
     for (;;) {
       const result = store.db
         .prepare(

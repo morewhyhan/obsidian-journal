@@ -13,6 +13,21 @@ export const TASK_UPDATE_STATUSES = [
   "blocked",
 ] as const;
 export const CRITERION_STATUSES = ["met", "unmet", "pending"] as const;
+export const GOAL_STATUSES = [
+  "proposed",
+  "active",
+  "paused",
+  "achieved",
+  "abandoned",
+  "superseded",
+] as const;
+export const MILESTONE_STATUSES = [
+  "planned",
+  "active",
+  "achieved",
+  "blocked",
+  "cancelled",
+] as const;
 export type Source = {
   input_id: string;
   channel: string;
@@ -42,6 +57,8 @@ export type Habit = Entity & {
     effective_until: string;
   }[];
   title: string;
+  goal_id?: string | null;
+  milestone_id?: string | null;
   min_behavior: string;
   minimum_quantity?: Quantity | null;
   optional_target: Quantity | null;
@@ -74,6 +91,9 @@ export type Task = Entity & {
   done_at: string | null;
   completion_time?: {performed_at:string|null;business_date:string|null;reported_at:string};
   parent_task_id: string | null;
+  /** Directional reference to M0; never replaces parent_task_id. */
+  goal_id?: string | null;
+  milestone_id?: string | null;
   supporting_habit_ids: string[];
   approval: Source | null;
   note_refs: NoteRef[];
@@ -148,6 +168,49 @@ export type Proposal = Entity & {
   status: "pending" | "accepted" | "expired" | "cancelled";
   source: Source;
 };
+export type GoalCriterion = Criterion & {
+  /** Optional evidence reference for goal-level acceptance. */
+  evidence_ref?: string | null;
+};
+export type GoalReviewPolicy = {
+  cadence: "weekly" | "monthly" | "quarterly" | "on_change";
+  next_at: string | null;
+  triggers: string[];
+};
+export type DecisionRecord = {
+  id: string;
+  at: string;
+  question: string;
+  context: string[];
+  options: string[];
+  chosen: string;
+  rationale: string;
+  rejected: string[];
+  valid_until: string | null;
+  source: Source;
+};
+export type Milestone = Entity & {
+  outcome: string;
+  acceptance: GoalCriterion[];
+  sequence: number;
+  depends_on: string[];
+  status: (typeof MILESTONE_STATUSES)[number];
+};
+export type GoalCase = Entity & {
+  title: string;
+  problem: string;
+  desired_outcome: string;
+  acceptance: GoalCriterion[];
+  constraints: string[];
+  non_goals: string[];
+  principles: string[];
+  review_policy: GoalReviewPolicy;
+  status: (typeof GOAL_STATUSES)[number];
+  milestones: Milestone[];
+  decision_log: DecisionRecord[];
+  source: Source;
+  completed_evidence?: string[];
+};
 export type Registry = {
   operational_blocks?: {capability:"background_write"|"contact"|"model"|"business_write";reason_code:string;
     source_ref:string;created_at:string;cleared_at?:string}[];
@@ -168,6 +231,8 @@ export type Registry = {
   controls: Control[];
   diary_links: DiaryLink[];
   proposals: Proposal[];
+  /** M0 Goal & Decision aggregate roots. Markdown remains the narrative source. */
+  goals: GoalCase[];
 };
 export type Occurrence = {
   id: string;

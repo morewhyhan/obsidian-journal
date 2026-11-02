@@ -1,7 +1,7 @@
 [
   {
     "name": "secretary",
-    "description": "私人助理业务工具。state/day/planning查实际任务、安排与版本；conversation取完整近期对话，预载缺失时主动查。apply_changes直接办理用户已交代或已接受的任务、习惯、排程、规则，结果立即返回，可修正后继续。save_proposals只保存尚待取舍的建议。resolve_proposals按已读提案id/version接受、暂缓、拒绝或修订后接受，可一次决定多项，不重复新建。create_period按Template创建并补父级。rules/preferences/followups/automations/focus查长期规则和进展。",
+    "description": "私人助理业务工具。state/day/planning查实际目标、任务、安排与版本；conversation取完整近期对话，预载缺失时主动查。apply_changes直接办理用户已交代或已接受的目标、任务、习惯、排程、规则，结果立即返回，可修正后继续。目标先保存问题、结果、验收和约束，再由Task/Habit执行；不要用parent_task_id冒充目标。save_proposals只保存尚待取舍的建议。resolve_proposals按已读提案id/version接受、暂缓、拒绝或修订后接受，可一次决定多项，不重复新建。create_period按Template创建并补父级。rules/preferences/followups/automations/focus查长期规则和进展。",
     "parameters": {
       "type": "object",
       "properties": {
@@ -48,6 +48,7 @@
         "scope": {
           "enum": [
             "all",
+            "goals",
             "habits",
             "tasks",
             "plans",
@@ -144,7 +145,15 @@
                         "resume_contact",
                         "cancel_item",
                         "remember_fact",
-                        "forget_fact"
+                        "forget_fact",
+                        "create_goal",
+                        "update_goal",
+                        "activate_goal",
+                        "pause_goal",
+                        "complete_goal",
+                        "abandon_goal",
+                        "add_milestone",
+                        "record_goal_decision"
                       ]
                     },
                     "work": {
@@ -206,6 +215,7 @@
                               "kind": {
                                 "type": "string",
                                 "enum": [
+                                  "goal",
                                   "task",
                                   "habit",
                                   "plan",
@@ -381,6 +391,7 @@
                                     "kind": {
                                       "type": "string",
                                       "enum": [
+                                        "goal",
                                         "task",
                                         "habit",
                                         "plan",
@@ -480,6 +491,7 @@
                                   "kind": {
                                     "type": "string",
                                     "enum": [
+                                      "goal",
                                       "task",
                                       "habit",
                                       "plan",
@@ -1296,7 +1308,11 @@
                         "blocked",
                         "met",
                         "unmet",
-                        "pending"
+                        "pending",
+                        "proposed",
+                        "achieved",
+                        "abandoned",
+                        "superseded"
                       ],
                       "description": "report_habit：做了=did、没做=did_not、跳过=skipped、未确认=unreported。不能用completed/done代替习惯事实；任务完成用complete_task。"
                     },
@@ -1479,6 +1495,303 @@
                           "type": "string",
                           "minLength": 1,
                           "maxLength": 100
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "goal_id": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 100
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "milestone_id": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 100
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "problem": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4000
+                    },
+                    "desired_outcome": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4000
+                    },
+                    "constraints": {
+                      "type": "array",
+                      "maxItems": 20,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      }
+                    },
+                    "non_goals": {
+                      "type": "array",
+                      "maxItems": 20,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      }
+                    },
+                    "principles": {
+                      "type": "array",
+                      "maxItems": 20,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      }
+                    },
+                    "review_policy": {
+                      "type": "object",
+                      "properties": {
+                        "cadence": {
+                          "enum": [
+                            "weekly",
+                            "monthly",
+                            "quarterly",
+                            "on_change"
+                          ]
+                        },
+                        "next_at": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "triggers": {
+                          "type": "array",
+                          "maxItems": 12,
+                          "uniqueItems": true,
+                          "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          }
+                        }
+                      },
+                      "required": [],
+                      "additionalProperties": false
+                    },
+                    "completion_evidence": {
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 12,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      }
+                    },
+                    "milestone_outcome": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2000
+                    },
+                    "milestone_acceptance": {
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 20,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "kind": {
+                            "enum": [
+                              "check",
+                              "count",
+                              "artifact"
+                            ]
+                          },
+                          "description": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 2000
+                          },
+                          "target": {
+                            "anyOf": [
+                              {
+                                "type": "number",
+                                "minimum": 0
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "unit": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 30
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "verification": {
+                            "enum": [
+                              "self_report",
+                              "tool"
+                            ]
+                          },
+                          "artifact_ref": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 1024
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "artifact_check": {
+                            "oneOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "const": "exists_nonempty"
+                                  }
+                                },
+                                "required": [
+                                  "kind"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "const": "contains_all"
+                                  },
+                                  "terms": {
+                                    "type": "array",
+                                    "minItems": 1,
+                                    "maxItems": 20,
+                                    "uniqueItems": true,
+                                    "items": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 500
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "terms"
+                                ],
+                                "additionalProperties": false
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "description"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "sequence": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "depends_on": {
+                      "type": "array",
+                      "maxItems": 12,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100
+                      }
+                    },
+                    "decision_question": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 1000
+                    },
+                    "decision_context": {
+                      "type": "array",
+                      "maxItems": 20,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      }
+                    },
+                    "decision_options": {
+                      "type": "array",
+                      "minItems": 2,
+                      "maxItems": 12,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      }
+                    },
+                    "decision_chosen": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    },
+                    "decision_rationale": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2000
+                    },
+                    "decision_rejected": {
+                      "type": "array",
+                      "maxItems": 12,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      }
+                    },
+                    "decision_valid_until": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time"
                         },
                         {
                           "type": "null"
@@ -1715,6 +2028,178 @@
                       "if": {
                         "properties": {
                           "type": {
+                            "const": "create_goal"
+                          }
+                        }
+                      },
+                      "then": {
+                        "propertyNames": {
+                          "enum": [
+                            "type",
+                            "title",
+                            "problem",
+                            "desired_outcome",
+                            "acceptance",
+                            "constraints",
+                            "non_goals",
+                            "principles",
+                            "review_policy",
+                            "status"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "update_goal"
+                          }
+                        }
+                      },
+                      "then": {
+                        "propertyNames": {
+                          "enum": [
+                            "type",
+                            "target_id",
+                            "expected_version",
+                            "title",
+                            "problem",
+                            "desired_outcome",
+                            "acceptance",
+                            "constraints",
+                            "non_goals",
+                            "principles",
+                            "review_policy",
+                            "status"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "activate_goal"
+                          }
+                        }
+                      },
+                      "then": {
+                        "propertyNames": {
+                          "enum": [
+                            "type",
+                            "target_id",
+                            "expected_version"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "pause_goal"
+                          }
+                        }
+                      },
+                      "then": {
+                        "propertyNames": {
+                          "enum": [
+                            "type",
+                            "target_id",
+                            "expected_version"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "complete_goal"
+                          }
+                        }
+                      },
+                      "then": {
+                        "propertyNames": {
+                          "enum": [
+                            "type",
+                            "target_id",
+                            "expected_version",
+                            "completion_evidence"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "abandon_goal"
+                          }
+                        }
+                      },
+                      "then": {
+                        "propertyNames": {
+                          "enum": [
+                            "type",
+                            "target_id",
+                            "expected_version"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "add_milestone"
+                          }
+                        }
+                      },
+                      "then": {
+                        "propertyNames": {
+                          "enum": [
+                            "type",
+                            "target_id",
+                            "expected_version",
+                            "milestone_outcome",
+                            "milestone_acceptance",
+                            "sequence",
+                            "depends_on"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "record_goal_decision"
+                          }
+                        }
+                      },
+                      "then": {
+                        "propertyNames": {
+                          "enum": [
+                            "type",
+                            "target_id",
+                            "expected_version",
+                            "decision_question",
+                            "decision_context",
+                            "decision_options",
+                            "decision_chosen",
+                            "decision_rationale",
+                            "decision_rejected",
+                            "decision_valid_until"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
                             "const": "create_habit"
                           }
                         }
@@ -1731,7 +2216,9 @@
                             "note_refs",
                             "recurrence",
                             "anchor",
-                            "reminder_mode"
+                            "reminder_mode",
+                            "goal_id",
+                            "milestone_id"
                           ]
                         }
                       }
@@ -1758,7 +2245,9 @@
                             "note_refs",
                             "recurrence",
                             "anchor",
-                            "reminder_mode"
+                            "reminder_mode",
+                            "goal_id",
+                            "milestone_id"
                           ]
                         }
                       }
@@ -1785,6 +2274,8 @@
                             "supporting_habit_ids",
                             "note_refs",
                             "planning",
+                            "goal_id",
+                            "milestone_id",
                             "initial_plan"
                           ]
                         }
@@ -1813,7 +2304,9 @@
                             "parent_task_id",
                             "supporting_habit_ids",
                             "note_refs",
-                            "planning"
+                            "planning",
+                            "goal_id",
+                            "milestone_id"
                           ]
                         }
                       }
@@ -2618,6 +3111,25 @@
                               "met",
                               "unmet",
                               "pending"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "create_goal"
+                          }
+                        }
+                      },
+                      "then": {
+                        "properties": {
+                          "status": {
+                            "enum": [
+                              "proposed",
+                              "active"
                             ]
                           }
                         }
@@ -3528,7 +4040,14 @@
                               "undo_rule",
                               "pause_focus",
                               "resume_focus",
-                              "stop_focus"
+                              "stop_focus",
+                              "update_goal",
+                              "activate_goal",
+                              "pause_goal",
+                              "complete_goal",
+                              "abandon_goal",
+                              "add_milestone",
+                              "record_goal_decision"
                             ]
                           }
                         }
@@ -3821,6 +4340,70 @@
                       "then": {
                         "required": [
                           "business_date"
+                        ]
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "create_goal"
+                          }
+                        }
+                      },
+                      "then": {
+                        "required": [
+                          "title",
+                          "problem",
+                          "desired_outcome",
+                          "acceptance"
+                        ]
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "complete_goal"
+                          }
+                        }
+                      },
+                      "then": {
+                        "required": [
+                          "completion_evidence"
+                        ]
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "add_milestone"
+                          }
+                        }
+                      },
+                      "then": {
+                        "required": [
+                          "milestone_outcome",
+                          "milestone_acceptance"
+                        ]
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "record_goal_decision"
+                          }
+                        }
+                      },
+                      "then": {
+                        "required": [
+                          "decision_question",
+                          "decision_context",
+                          "decision_options",
+                          "decision_chosen",
+                          "decision_rationale"
                         ]
                       }
                     },
@@ -3965,7 +4548,15 @@
                         "resume_contact",
                         "cancel_item",
                         "remember_fact",
-                        "forget_fact"
+                        "forget_fact",
+                        "create_goal",
+                        "update_goal",
+                        "activate_goal",
+                        "pause_goal",
+                        "complete_goal",
+                        "abandon_goal",
+                        "add_milestone",
+                        "record_goal_decision"
                       ]
                     },
                     "work": {
@@ -4027,6 +4618,7 @@
                               "kind": {
                                 "type": "string",
                                 "enum": [
+                                  "goal",
                                   "task",
                                   "habit",
                                   "plan",
@@ -4202,6 +4794,7 @@
                                     "kind": {
                                       "type": "string",
                                       "enum": [
+                                        "goal",
                                         "task",
                                         "habit",
                                         "plan",
@@ -4301,6 +4894,7 @@
                                   "kind": {
                                     "type": "string",
                                     "enum": [
+                                      "goal",
                                       "task",
                                       "habit",
                                       "plan",
@@ -5117,7 +5711,11 @@
                         "blocked",
                         "met",
                         "unmet",
-                        "pending"
+                        "pending",
+                        "proposed",
+                        "achieved",
+                        "abandoned",
+                        "superseded"
                       ],
                       "description": "report_habit：做了=did、没做=did_not、跳过=skipped、未确认=unreported。不能用completed/done代替习惯事实；任务完成用complete_task。"
                     },
@@ -5300,6 +5898,303 @@
                           "type": "string",
                           "minLength": 1,
                           "maxLength": 100
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "goal_id": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 100
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "milestone_id": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 100
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "problem": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4000
+                    },
+                    "desired_outcome": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4000
+                    },
+                    "constraints": {
+                      "type": "array",
+                      "maxItems": 20,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      }
+                    },
+                    "non_goals": {
+                      "type": "array",
+                      "maxItems": 20,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      }
+                    },
+                    "principles": {
+                      "type": "array",
+                      "maxItems": 20,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      }
+                    },
+                    "review_policy": {
+                      "type": "object",
+                      "properties": {
+                        "cadence": {
+                          "enum": [
+                            "weekly",
+                            "monthly",
+                            "quarterly",
+                            "on_change"
+                          ]
+                        },
+                        "next_at": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "triggers": {
+                          "type": "array",
+                          "maxItems": 12,
+                          "uniqueItems": true,
+                          "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          }
+                        }
+                      },
+                      "required": [],
+                      "additionalProperties": false
+                    },
+                    "completion_evidence": {
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 12,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      }
+                    },
+                    "milestone_outcome": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2000
+                    },
+                    "milestone_acceptance": {
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 20,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "kind": {
+                            "enum": [
+                              "check",
+                              "count",
+                              "artifact"
+                            ]
+                          },
+                          "description": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 2000
+                          },
+                          "target": {
+                            "anyOf": [
+                              {
+                                "type": "number",
+                                "minimum": 0
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "unit": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 30
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "verification": {
+                            "enum": [
+                              "self_report",
+                              "tool"
+                            ]
+                          },
+                          "artifact_ref": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 1024
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "artifact_check": {
+                            "oneOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "const": "exists_nonempty"
+                                  }
+                                },
+                                "required": [
+                                  "kind"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "const": "contains_all"
+                                  },
+                                  "terms": {
+                                    "type": "array",
+                                    "minItems": 1,
+                                    "maxItems": 20,
+                                    "uniqueItems": true,
+                                    "items": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 500
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "terms"
+                                ],
+                                "additionalProperties": false
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "description"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "sequence": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "depends_on": {
+                      "type": "array",
+                      "maxItems": 12,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100
+                      }
+                    },
+                    "decision_question": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 1000
+                    },
+                    "decision_context": {
+                      "type": "array",
+                      "maxItems": 20,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      }
+                    },
+                    "decision_options": {
+                      "type": "array",
+                      "minItems": 2,
+                      "maxItems": 12,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      }
+                    },
+                    "decision_chosen": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    },
+                    "decision_rationale": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2000
+                    },
+                    "decision_rejected": {
+                      "type": "array",
+                      "maxItems": 12,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      }
+                    },
+                    "decision_valid_until": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time"
                         },
                         {
                           "type": "null"
@@ -5536,6 +6431,178 @@
                       "if": {
                         "properties": {
                           "type": {
+                            "const": "create_goal"
+                          }
+                        }
+                      },
+                      "then": {
+                        "propertyNames": {
+                          "enum": [
+                            "type",
+                            "title",
+                            "problem",
+                            "desired_outcome",
+                            "acceptance",
+                            "constraints",
+                            "non_goals",
+                            "principles",
+                            "review_policy",
+                            "status"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "update_goal"
+                          }
+                        }
+                      },
+                      "then": {
+                        "propertyNames": {
+                          "enum": [
+                            "type",
+                            "target_id",
+                            "expected_version",
+                            "title",
+                            "problem",
+                            "desired_outcome",
+                            "acceptance",
+                            "constraints",
+                            "non_goals",
+                            "principles",
+                            "review_policy",
+                            "status"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "activate_goal"
+                          }
+                        }
+                      },
+                      "then": {
+                        "propertyNames": {
+                          "enum": [
+                            "type",
+                            "target_id",
+                            "expected_version"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "pause_goal"
+                          }
+                        }
+                      },
+                      "then": {
+                        "propertyNames": {
+                          "enum": [
+                            "type",
+                            "target_id",
+                            "expected_version"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "complete_goal"
+                          }
+                        }
+                      },
+                      "then": {
+                        "propertyNames": {
+                          "enum": [
+                            "type",
+                            "target_id",
+                            "expected_version",
+                            "completion_evidence"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "abandon_goal"
+                          }
+                        }
+                      },
+                      "then": {
+                        "propertyNames": {
+                          "enum": [
+                            "type",
+                            "target_id",
+                            "expected_version"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "add_milestone"
+                          }
+                        }
+                      },
+                      "then": {
+                        "propertyNames": {
+                          "enum": [
+                            "type",
+                            "target_id",
+                            "expected_version",
+                            "milestone_outcome",
+                            "milestone_acceptance",
+                            "sequence",
+                            "depends_on"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "record_goal_decision"
+                          }
+                        }
+                      },
+                      "then": {
+                        "propertyNames": {
+                          "enum": [
+                            "type",
+                            "target_id",
+                            "expected_version",
+                            "decision_question",
+                            "decision_context",
+                            "decision_options",
+                            "decision_chosen",
+                            "decision_rationale",
+                            "decision_rejected",
+                            "decision_valid_until"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
                             "const": "create_habit"
                           }
                         }
@@ -5552,7 +6619,9 @@
                             "note_refs",
                             "recurrence",
                             "anchor",
-                            "reminder_mode"
+                            "reminder_mode",
+                            "goal_id",
+                            "milestone_id"
                           ]
                         }
                       }
@@ -5579,7 +6648,9 @@
                             "note_refs",
                             "recurrence",
                             "anchor",
-                            "reminder_mode"
+                            "reminder_mode",
+                            "goal_id",
+                            "milestone_id"
                           ]
                         }
                       }
@@ -5606,6 +6677,8 @@
                             "supporting_habit_ids",
                             "note_refs",
                             "planning",
+                            "goal_id",
+                            "milestone_id",
                             "initial_plan"
                           ]
                         }
@@ -5634,7 +6707,9 @@
                             "parent_task_id",
                             "supporting_habit_ids",
                             "note_refs",
-                            "planning"
+                            "planning",
+                            "goal_id",
+                            "milestone_id"
                           ]
                         }
                       }
@@ -6439,6 +7514,25 @@
                               "met",
                               "unmet",
                               "pending"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "create_goal"
+                          }
+                        }
+                      },
+                      "then": {
+                        "properties": {
+                          "status": {
+                            "enum": [
+                              "proposed",
+                              "active"
                             ]
                           }
                         }
@@ -7349,7 +8443,14 @@
                               "undo_rule",
                               "pause_focus",
                               "resume_focus",
-                              "stop_focus"
+                              "stop_focus",
+                              "update_goal",
+                              "activate_goal",
+                              "pause_goal",
+                              "complete_goal",
+                              "abandon_goal",
+                              "add_milestone",
+                              "record_goal_decision"
                             ]
                           }
                         }
@@ -7642,6 +8743,70 @@
                       "then": {
                         "required": [
                           "business_date"
+                        ]
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "create_goal"
+                          }
+                        }
+                      },
+                      "then": {
+                        "required": [
+                          "title",
+                          "problem",
+                          "desired_outcome",
+                          "acceptance"
+                        ]
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "complete_goal"
+                          }
+                        }
+                      },
+                      "then": {
+                        "required": [
+                          "completion_evidence"
+                        ]
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "add_milestone"
+                          }
+                        }
+                      },
+                      "then": {
+                        "required": [
+                          "milestone_outcome",
+                          "milestone_acceptance"
+                        ]
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "record_goal_decision"
+                          }
+                        }
+                      },
+                      "then": {
+                        "required": [
+                          "decision_question",
+                          "decision_context",
+                          "decision_options",
+                          "decision_chosen",
+                          "decision_rationale"
                         ]
                       }
                     },
@@ -7810,7 +8975,15 @@
                         "resume_contact",
                         "cancel_item",
                         "remember_fact",
-                        "forget_fact"
+                        "forget_fact",
+                        "create_goal",
+                        "update_goal",
+                        "activate_goal",
+                        "pause_goal",
+                        "complete_goal",
+                        "abandon_goal",
+                        "add_milestone",
+                        "record_goal_decision"
                       ]
                     },
                     "work": {
@@ -7872,6 +9045,7 @@
                               "kind": {
                                 "type": "string",
                                 "enum": [
+                                  "goal",
                                   "task",
                                   "habit",
                                   "plan",
@@ -8047,6 +9221,7 @@
                                     "kind": {
                                       "type": "string",
                                       "enum": [
+                                        "goal",
                                         "task",
                                         "habit",
                                         "plan",
@@ -8146,6 +9321,7 @@
                                   "kind": {
                                     "type": "string",
                                     "enum": [
+                                      "goal",
                                       "task",
                                       "habit",
                                       "plan",
@@ -8962,7 +10138,11 @@
                         "blocked",
                         "met",
                         "unmet",
-                        "pending"
+                        "pending",
+                        "proposed",
+                        "achieved",
+                        "abandoned",
+                        "superseded"
                       ],
                       "description": "report_habit：做了=did、没做=did_not、跳过=skipped、未确认=unreported。不能用completed/done代替习惯事实；任务完成用complete_task。"
                     },
@@ -9145,6 +10325,303 @@
                           "type": "string",
                           "minLength": 1,
                           "maxLength": 100
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "goal_id": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 100
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "milestone_id": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 100
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "problem": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4000
+                    },
+                    "desired_outcome": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4000
+                    },
+                    "constraints": {
+                      "type": "array",
+                      "maxItems": 20,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      }
+                    },
+                    "non_goals": {
+                      "type": "array",
+                      "maxItems": 20,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      }
+                    },
+                    "principles": {
+                      "type": "array",
+                      "maxItems": 20,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      }
+                    },
+                    "review_policy": {
+                      "type": "object",
+                      "properties": {
+                        "cadence": {
+                          "enum": [
+                            "weekly",
+                            "monthly",
+                            "quarterly",
+                            "on_change"
+                          ]
+                        },
+                        "next_at": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "triggers": {
+                          "type": "array",
+                          "maxItems": 12,
+                          "uniqueItems": true,
+                          "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          }
+                        }
+                      },
+                      "required": [],
+                      "additionalProperties": false
+                    },
+                    "completion_evidence": {
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 12,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      }
+                    },
+                    "milestone_outcome": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2000
+                    },
+                    "milestone_acceptance": {
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": 20,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "kind": {
+                            "enum": [
+                              "check",
+                              "count",
+                              "artifact"
+                            ]
+                          },
+                          "description": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 2000
+                          },
+                          "target": {
+                            "anyOf": [
+                              {
+                                "type": "number",
+                                "minimum": 0
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "unit": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 30
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "verification": {
+                            "enum": [
+                              "self_report",
+                              "tool"
+                            ]
+                          },
+                          "artifact_ref": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 1024
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "artifact_check": {
+                            "oneOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "const": "exists_nonempty"
+                                  }
+                                },
+                                "required": [
+                                  "kind"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "const": "contains_all"
+                                  },
+                                  "terms": {
+                                    "type": "array",
+                                    "minItems": 1,
+                                    "maxItems": 20,
+                                    "uniqueItems": true,
+                                    "items": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 500
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "terms"
+                                ],
+                                "additionalProperties": false
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "description"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "sequence": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "depends_on": {
+                      "type": "array",
+                      "maxItems": 12,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100
+                      }
+                    },
+                    "decision_question": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 1000
+                    },
+                    "decision_context": {
+                      "type": "array",
+                      "maxItems": 20,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      }
+                    },
+                    "decision_options": {
+                      "type": "array",
+                      "minItems": 2,
+                      "maxItems": 12,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      }
+                    },
+                    "decision_chosen": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    },
+                    "decision_rationale": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2000
+                    },
+                    "decision_rejected": {
+                      "type": "array",
+                      "maxItems": 12,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 500
+                      }
+                    },
+                    "decision_valid_until": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "date-time"
                         },
                         {
                           "type": "null"
@@ -9381,6 +10858,178 @@
                       "if": {
                         "properties": {
                           "type": {
+                            "const": "create_goal"
+                          }
+                        }
+                      },
+                      "then": {
+                        "propertyNames": {
+                          "enum": [
+                            "type",
+                            "title",
+                            "problem",
+                            "desired_outcome",
+                            "acceptance",
+                            "constraints",
+                            "non_goals",
+                            "principles",
+                            "review_policy",
+                            "status"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "update_goal"
+                          }
+                        }
+                      },
+                      "then": {
+                        "propertyNames": {
+                          "enum": [
+                            "type",
+                            "target_id",
+                            "expected_version",
+                            "title",
+                            "problem",
+                            "desired_outcome",
+                            "acceptance",
+                            "constraints",
+                            "non_goals",
+                            "principles",
+                            "review_policy",
+                            "status"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "activate_goal"
+                          }
+                        }
+                      },
+                      "then": {
+                        "propertyNames": {
+                          "enum": [
+                            "type",
+                            "target_id",
+                            "expected_version"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "pause_goal"
+                          }
+                        }
+                      },
+                      "then": {
+                        "propertyNames": {
+                          "enum": [
+                            "type",
+                            "target_id",
+                            "expected_version"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "complete_goal"
+                          }
+                        }
+                      },
+                      "then": {
+                        "propertyNames": {
+                          "enum": [
+                            "type",
+                            "target_id",
+                            "expected_version",
+                            "completion_evidence"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "abandon_goal"
+                          }
+                        }
+                      },
+                      "then": {
+                        "propertyNames": {
+                          "enum": [
+                            "type",
+                            "target_id",
+                            "expected_version"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "add_milestone"
+                          }
+                        }
+                      },
+                      "then": {
+                        "propertyNames": {
+                          "enum": [
+                            "type",
+                            "target_id",
+                            "expected_version",
+                            "milestone_outcome",
+                            "milestone_acceptance",
+                            "sequence",
+                            "depends_on"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "record_goal_decision"
+                          }
+                        }
+                      },
+                      "then": {
+                        "propertyNames": {
+                          "enum": [
+                            "type",
+                            "target_id",
+                            "expected_version",
+                            "decision_question",
+                            "decision_context",
+                            "decision_options",
+                            "decision_chosen",
+                            "decision_rationale",
+                            "decision_rejected",
+                            "decision_valid_until"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
                             "const": "create_habit"
                           }
                         }
@@ -9397,7 +11046,9 @@
                             "note_refs",
                             "recurrence",
                             "anchor",
-                            "reminder_mode"
+                            "reminder_mode",
+                            "goal_id",
+                            "milestone_id"
                           ]
                         }
                       }
@@ -9424,7 +11075,9 @@
                             "note_refs",
                             "recurrence",
                             "anchor",
-                            "reminder_mode"
+                            "reminder_mode",
+                            "goal_id",
+                            "milestone_id"
                           ]
                         }
                       }
@@ -9451,6 +11104,8 @@
                             "supporting_habit_ids",
                             "note_refs",
                             "planning",
+                            "goal_id",
+                            "milestone_id",
                             "initial_plan"
                           ]
                         }
@@ -9479,7 +11134,9 @@
                             "parent_task_id",
                             "supporting_habit_ids",
                             "note_refs",
-                            "planning"
+                            "planning",
+                            "goal_id",
+                            "milestone_id"
                           ]
                         }
                       }
@@ -10284,6 +11941,25 @@
                               "met",
                               "unmet",
                               "pending"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "create_goal"
+                          }
+                        }
+                      },
+                      "then": {
+                        "properties": {
+                          "status": {
+                            "enum": [
+                              "proposed",
+                              "active"
                             ]
                           }
                         }
@@ -11194,7 +12870,14 @@
                               "undo_rule",
                               "pause_focus",
                               "resume_focus",
-                              "stop_focus"
+                              "stop_focus",
+                              "update_goal",
+                              "activate_goal",
+                              "pause_goal",
+                              "complete_goal",
+                              "abandon_goal",
+                              "add_milestone",
+                              "record_goal_decision"
                             ]
                           }
                         }
@@ -11487,6 +13170,70 @@
                       "then": {
                         "required": [
                           "business_date"
+                        ]
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "create_goal"
+                          }
+                        }
+                      },
+                      "then": {
+                        "required": [
+                          "title",
+                          "problem",
+                          "desired_outcome",
+                          "acceptance"
+                        ]
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "complete_goal"
+                          }
+                        }
+                      },
+                      "then": {
+                        "required": [
+                          "completion_evidence"
+                        ]
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "add_milestone"
+                          }
+                        }
+                      },
+                      "then": {
+                        "required": [
+                          "milestone_outcome",
+                          "milestone_acceptance"
+                        ]
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "type": {
+                            "const": "record_goal_decision"
+                          }
+                        }
+                      },
+                      "then": {
+                        "required": [
+                          "decision_question",
+                          "decision_context",
+                          "decision_options",
+                          "decision_chosen",
+                          "decision_rationale"
                         ]
                       }
                     },

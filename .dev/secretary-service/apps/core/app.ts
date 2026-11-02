@@ -1030,7 +1030,7 @@ export async function createApp(options: AppOptions) {
             kind: { enum: ["daily", "weekly", "monthly", "quarterly", "yearly"] },
             date: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
             scope: {
-              enum: ["all", "habits", "tasks", "plans", "controls", "proposals"],
+              enum: ["all", "goals", "habits", "tasks", "plans", "controls", "proposals"],
             },
             query: { type: "string", maxLength: 200 },
             ids: {

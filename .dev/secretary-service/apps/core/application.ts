@@ -33,7 +33,7 @@ export const applicationCapabilities = {
       "rules/automations/focus/board/planning_context按需读取；自主工具模式用apply_changes执行规则、自动化和计时动作，纯消息提醒用create_automation。",
     planning:
       "secretary.planning按日期读取真实安排、待决冲突、准备资料入口和已确认可用时间；自主工具模式用apply_changes办理plan_day/set_planning/configure_task/report_execution。",
-    read: "secretary.state/day 按需查询所有习惯、任务、安排和历史事实；空的预载上下文不等于没有记录",
+    read: "secretary.state/day 按需查询目标、阶段、习惯、任务、安排和历史事实；空的预载上下文不等于没有记录",
     write: "secretary.apply_changes直接执行，带读取到的id/version；save_proposals保留未定建议；resolve_proposals决定原建议，不重复新建",
   },
   files: {
@@ -89,7 +89,7 @@ export type ApplicationCall = {
     | "restore_version";
   kind?: Period;
   date?: string;
-  scope?: "habits" | "tasks" | "plans" | "controls" | "proposals" | "all";
+  scope?: "goals" | "habits" | "tasks" | "plans" | "controls" | "proposals" | "all";
   query?: string;
   ids?: string[];
   offset?: number;
@@ -168,7 +168,7 @@ async function applicationOperation(
     if(args.operation==="state") {
       const r=s.registry(),wanted=args.ids??g.object_ids;
       if(wanted.some(id=>!g.object_ids.includes(id)))throw new AppError("BACKGROUND_SCOPE","查询对象超出委托范围",403);
-      const all=[...r.tasks,...r.habits,...r.plans,...r.proposals,...r.user_rules??[]].filter(x=>wanted.includes(x.id));
+      const all=[...r.goals,...r.tasks,...r.habits,...r.plans,...r.proposals,...r.user_rules??[]].filter(x=>wanted.includes(x.id));
       return {items:all.slice(offset,offset+20),total:all.length,next_offset:offset+20<all.length?offset+20:null};
     }
     if(args.operation==="followups")return {items:[s.registry().followups!.find(f=>f.id===g.work_id)],next_offset:null};
@@ -351,7 +351,7 @@ async function applicationOperation(
     const scopes =
       args.scope && args.scope !== "all"
         ? [args.scope]
-        : (["habits", "tasks", "plans", "controls", "proposals"] as const);
+        : (["goals", "habits", "tasks", "plans", "controls", "proposals"] as const);
     const all = scopes.flatMap((scope) =>
       (r[scope] as any[]).map((entity) => ({ scope, ...entity })),
     );

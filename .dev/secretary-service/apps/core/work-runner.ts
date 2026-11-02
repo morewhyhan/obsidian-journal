@@ -2,7 +2,7 @@ import type { Core } from "./core.js";
 import { AppError, type Input } from "../../packages/contracts/types.js";
 import { deriveGrant } from "./background-grant.js";
 import { reconcileWork } from "./work-checks.js";
-import { canonicalJson,hash } from "./files.js";
+import { canonicalJson,hash,id } from "./files.js";
 import { referencedObject } from "../../packages/domain/work.js";
 
 export async function runDelegatedWork(core:Core,allowForeground=false) {
@@ -32,7 +32,7 @@ export async function runDelegatedWork(core:Core,allowForeground=false) {
     if(f.analysis?.fingerprint===cause && (f.analysis.status==="done" || f.analysis.attempts>=2))continue;
     let grant;try{grant=deriveGrant(s,f);}catch{continue;}
     const attempt=f.analysis?.fingerprint===cause?f.analysis.attempts+1:1;
-    const job="work-job:"+hash(canonicalJson([f.id,f.work!.step_id,cause,attempt]));
+    const job="work-job:"+hash(canonicalJson([f.id,f.work!.step_id,cause,attempt]))+(f.analysis?.status==="superseded"?":"+id("resume"):"");
     const input:Input={id:job,external_id:job,channel:"coordinator",actor_ref:"assistant",occurred_at:now,
       text:"履行当前已接受委托。先查证，再在有限工具权限内真实办理；不能改变用户成果或扩大范围。需要等待或决定时，用save_work保留准确下一处理者和下一步。最后说明实际效果，不对用户直接发消息。"};
     const claimed=await s.exclusive(()=>{
@@ -71,7 +71,10 @@ export async function runDelegatedWork(core:Core,allowForeground=false) {
       await s.exclusive(()=>{
         s.commit(job+":failure","coordinator",job,reg=>{
           const current=reg.followups!.find(x=>x.id===f.id);
-          if(current?.analysis?.fingerprint===cause)current.analysis.status="failed";
+          if(current?.analysis?.fingerprint===cause) {
+            current.analysis.status=error instanceof AppError && error.code==="BACKGROUND_PREEMPTED"?"superseded":"failed";
+            if(error instanceof AppError && error.code==="BACKGROUND_PREEMPTED")current.analysis.attempts=Math.max(0,attempt-1);
+          }
           return {ids:[],message:"准备中断，已保存效果保留，责任不算完成"};
         });
         s.db.prepare("UPDATE inbox SET status='failed',body=NULL,processed_at=?,error_code=? WHERE id=?")

@@ -176,6 +176,22 @@ it("domain permission and version boundaries still reject bad native tools",asyn
     return reply("这个对象和路径都无法访问，未执行。");
   });await turn(h,"处理一下");expect(h.store.registry().tasks).toHaveLength(0);
 });
+it("explicit discussion mode cannot be upgraded to a write by a native tool call", async () => {
+  const h = setup();
+  use(h, async input => {
+    await expect(businessCall(h.core, {
+      input_id: input.id,
+      call_id: "should-not-write",
+      operation: "apply_changes",
+      action_groups: [{ action_identity: "new", actions: [task(1)] }],
+    })).rejects.toMatchObject({ code: "DISCUSSION_ONLY" });
+    return reply("先讨论，尚未创建任务。");
+  });
+  await turn(h, "先讨论一下这件事，不要真的创建任务。");
+  expect(h.store.registry().tasks).toHaveLength(0);
+  const input = h.store.db.prepare("SELECT metadata_json FROM inbox ORDER BY rowid DESC LIMIT 1").get() as any;
+  expect(JSON.parse(input.metadata_json).interaction_mode).toBe("discussion_read_only");
+});
 it("model failure after a real write never sends a canned reply or loses the write",async()=>{
   const h=setup();
   use(h,async input=>{await businessCall(h.core,{input_id:input.id,call_id:"once",operation:"apply_changes",action_groups:[{action_identity:"new",actions:[task(1)]}]});throw new Error("MODEL_OFFLINE");});
@@ -198,13 +214,14 @@ it("a pause or completion while reminder language is being generated prevents st
     await h.run({type:"pause_contact"});return{text:"这条旧提醒不应发送。"};}};
   const scheduler=new Scheduler(h.core,channel,"user");await scheduler.tick();scheduler.close();expect(sent).toBe(0);
 });
-it("queued legacy reminders cannot bypass failed LLM generation after an upgrade",async()=>{
+it("an upgraded reminder uses its current accepted action when wording generation fails, never a stale queued body",async()=>{
   const h=setup();await h.run({...task(1),initial_plan:{kind:"fixed",window_start:"2026-10-26T08:00:00Z",window_end:"2026-10-26T09:00:00Z",duration_minutes:60,next_action:"打开资料A"}});
   const offline=new Scheduler(h.core,{health:()=>({connected:false,lastEventAt:null}),send:async()=>({status:"failed",reason:"offline"})},"user");
   await offline.tick();offline.close();expect(h.store.db.prepare("SELECT count(*) n FROM outbox WHERE status='pending'").get()).toEqual({n:1});
-  let sent=0;const channel={health:()=>({connected:true,lastEventAt:null}),send:async()=>{sent++;return{status:"sent" as const,externalId:"sent"};}};
+  h.store.db.prepare("UPDATE outbox SET body='过时的旧文案' WHERE status='pending'").run();
+  const sent:string[]=[];const channel={health:()=>({connected:true,lastEventAt:null}),send:async(m:any)=>{sent.push(m.body);return{status:"sent" as const,externalId:"sent"};}};
   h.core.agent={executionMode:"tools-v2",interpret:async()=>reply(""),compose:async()=>{throw new Error("offline");}};
-  const scheduler=new Scheduler(h.core,channel,"user");await scheduler.tick();scheduler.close();expect(sent).toBe(0);
+  const scheduler=new Scheduler(h.core,channel,"user");await scheduler.tick();scheduler.close();expect(sent).toEqual(["打开资料A"]);
 });
 it("restart composes a real recovery explanation without replaying business or sending a static receipt",async()=>{
   const h=setup();let inputId="";

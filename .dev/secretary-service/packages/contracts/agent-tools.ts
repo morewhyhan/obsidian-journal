@@ -49,7 +49,7 @@ export const AGENT_TOOLS = [
   {
     name: "secretary",
     description:
-      "私人助理业务工具。state/day/planning查实际任务、安排与版本；conversation取完整近期对话，预载缺失时主动查。apply_changes直接办理用户已交代或已接受的任务、习惯、排程、规则，结果立即返回，可修正后继续。save_proposals只保存尚待取舍的建议。resolve_proposals按已读提案id/version接受、暂缓、拒绝或修订后接受，可一次决定多项，不重复新建。create_period按Template创建并补父级。rules/preferences/followups/automations/focus查长期规则和进展。",
+      "私人助理业务工具。state/day/planning查实际目标、任务、安排与版本；conversation取完整近期对话，预载缺失时主动查。apply_changes直接办理用户已交代或已接受的目标、任务、习惯、排程、规则，结果立即返回，可修正后继续。目标先保存问题、结果、验收和约束，再由Task/Habit执行；不要用parent_task_id冒充目标。save_proposals只保存尚待取舍的建议。resolve_proposals按已读提案id/version接受、暂缓、拒绝或修订后接受，可一次决定多项，不重复新建。create_period按Template创建并补父级。rules/preferences/followups/automations/focus查长期规则和进展。",
     parameters: properties(
       {
         operation: {
@@ -79,7 +79,7 @@ export const AGENT_TOOLS = [
         kind: { enum: ["daily", "weekly", "monthly", "quarterly", "yearly"] },
         date: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
         scope: {
-          enum: ["all", "habits", "tasks", "plans", "controls", "proposals"],
+          enum: ["all", "goals", "habits", "tasks", "plans", "controls", "proposals"],
         },
         query: string,
         ids: { type: "array", items: string },

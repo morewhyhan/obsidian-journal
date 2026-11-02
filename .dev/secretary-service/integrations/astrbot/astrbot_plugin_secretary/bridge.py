@@ -191,6 +191,8 @@ class Bridge:
             cls.check_schema(tool['parameters'])
             self.validators[tool['name']] = cls(tool['parameters'])
         self.lock = asyncio.Lock()
+        self.background_run = None
+        self.preempted_jobs = set()
         self.session = None
         self.runner = None
         self.last_event = None
@@ -276,18 +278,38 @@ class Bridge:
     async def interpret(self, request):
         payload = await request.json()
         timeout = min(120, max(10, payload.get("limits", {}).get("timeout_ms", 120000) / 1000))
+        source = payload['input']
+        kind = 'self_test' if source['id'] == 'model-self-test' else 'background' if source.get('channel') == 'coordinator' else 'front'
         async with asyncio.timeout(timeout):
+            background = self.background_run
+            if kind == 'front' and background is not None:
+                task, job_id = background
+                # Revoke tool authority before cancelling inference. The same
+                # lock is released only after the old job's finally has run.
+                await self.core_post('/internal/model/jobs/end', {'job_id': job_id})
+                self.preempted_jobs.add(job_id)
+                task.cancel()
             async with self.lock:
-                source = payload['input']
-                kind = 'self_test' if source['id'] == 'model-self-test' else 'background' if source.get('channel') == 'coordinator' else 'front'
                 job = await self.core_post('/internal/model/jobs/start', {'input_id':source['id'], 'kind':kind, 'tools_hash':self.tools_hash})
+                run = None
                 try:
                     turn = Turn(self, payload)
-                    await self.context.run_secretary(turn)
+                    run = asyncio.create_task(self.context.run_secretary(turn))
+                    if kind == 'background':
+                        self.background_run = (run, job['id'])
+                    try:
+                        await run
+                    except asyncio.CancelledError:
+                        if job['id'] not in self.preempted_jobs:
+                            raise
+                        return web.json_response({'error': {'code': 'BACKGROUND_PREEMPTED'}}, status=503)
                     if turn.captured is None:
                         raise ValueError("AGENT_INVALID")
                     return web.json_response(turn.captured)
                 finally:
+                    if self.background_run is not None and self.background_run[0] is run:
+                        self.background_run = None
+                    self.preempted_jobs.discard(job['id'])
                     with suppress(Exception):
                         await self.core_post('/internal/model/jobs/end', {'job_id':job['id']})
 

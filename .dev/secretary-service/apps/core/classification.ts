@@ -85,7 +85,7 @@ export function advanceUnderstood(store: Store) {
   // ones already cleaned below it; otherwise stay at 0 and let contiguity decide.
   const persisted = understoodSeq(store);
   const lowest = rows[0]?.seq ?? 0;
-  let watermark = lowest > 1 && persisted >= lowest - 1 ? lowest - 1 : 0;
+  let watermark = rows.length === 0 ? persisted : lowest > 1 && persisted >= lowest - 1 ? lowest - 1 : 0;
   for (const row of rows) {
     if (row.seq !== watermark + 1) break;
     if (row.classification !== "classified") break;

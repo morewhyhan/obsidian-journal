@@ -3,7 +3,7 @@ import { z } from "zod";
 const text = (n: number) => z.string().trim().min(1).max(n);
 const instant = z.iso.datetime({ offset: true });
 export const workRefSchema = z.strictObject({
-  kind: z.enum(["task", "habit", "plan", "proposal", "rule", "note"]),
+  kind: z.enum(["goal", "task", "habit", "plan", "proposal", "rule", "note"]),
   id: text(200).optional(), path: text(1024).optional(),
   role: z.enum(["subject", "input", "output", "decision"]),
   observed_version: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),

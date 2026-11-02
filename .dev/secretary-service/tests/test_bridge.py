@@ -1,5 +1,6 @@
 """Run with the existing AstrBot bridge requirements; no QQ connection or model calls."""
 import importlib.util
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,50 @@ bridge_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bridge_module)
 
 class ToolRecovery(unittest.IsolatedAsyncioTestCase):
+    async def test_foreground_request_revokes_and_cancels_background_before_starting(self):
+        import aiohttp
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+        calls = []
+
+        class Context:
+            async def run_secretary(self, turn):
+                if turn.payload['input'].get('channel') == 'coordinator':
+                    started.set()
+                    try:
+                        await asyncio.Event().wait()
+                    finally:
+                        cancelled.set()
+                else:
+                    turn.captured = {'action_groups': [], 'reply_intent': 'discussion', 'discussion': '前台回答', 'clarification': None}
+
+        bridge = bridge_module.Bridge(Context(), 'x' * 40, 'http://test.invalid', '', '')
+
+        async def core_post(path, payload):
+            calls.append((path, payload))
+            return {'id': payload.get('kind', 'ended') + '-job'}
+
+        bridge.core_post = core_post
+        try:
+            site = await bridge.start(host='127.0.0.1', port=0)
+            port = site._server.sockets[0].getsockname()[1]
+            async with aiohttp.ClientSession(headers={'Authorization': 'Bearer ' + 'x' * 40}) as client:
+                async def post(source):
+                    async with client.post(f'http://127.0.0.1:{port}/interpret', json={'input': source, 'context': {}}) as response:
+                        return response.status, await response.json()
+                background = asyncio.create_task(post({'id': 'background', 'channel': 'coordinator'}))
+                await asyncio.wait_for(started.wait(), 2)
+                status, result = await asyncio.wait_for(post({'id': 'front', 'channel': 'qq'}), 2)
+                self.assertEqual(status, 200)
+                self.assertEqual(result['discussion'], '前台回答')
+                status, result = await background
+                self.assertEqual(result['error']['code'], 'BACKGROUND_PREEMPTED')
+                self.assertTrue(cancelled.is_set())
+                front_start = next(i for i, (path, body) in enumerate(calls) if path.endswith('/start') and body['kind'] == 'front')
+                self.assertTrue(any(path.endswith('/end') and body['job_id'] == 'background-job' for path, body in calls[:front_start]))
+        finally:
+            await bridge.close()
+
     async def test_wrong_entity_and_ignored_planning_fields_are_corrected_before_capture(self):
         turn,bridge=self.turn()
         turn.observe_versions({'tasks':[{'id':'task-x','version':2}],

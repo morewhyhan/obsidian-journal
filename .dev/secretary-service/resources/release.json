@@ -1,9 +1,9 @@
 {
   "format": 1,
   "service_version": "0.1.0",
-  "source_commit": "3dd35670ab44a79c2a8781bd38e1e6b20270bcbd",
+  "source_commit": "00549e0aed8f73de2c347b06f38ffaf0d6e8a4ec",
   "source_commit_is_base_only": true,
-  "source_hash": "sha256:bcf1a62c0de00ba7ec35fa416ed7653e57cedac039d3a9503606a89044b40edc",
+  "source_hash": "sha256:db06f30b7c0a21b1ec58ea20f3f8339781cc09ad3e766d830e191552c8e90db9",
   "lock_hash": "sha256:a1340b831039fad6ccb59eea32648172911a3773627c3f9113f507112401a651",
   "tools_hash": "sha256:0e8d80b4b19429201233897abdf4b6a9af6a8f2e6236cb87a4c351a5786b128a",
   "plugin_version": "1.0.0",
@@ -15,7 +15,7 @@
   "files": [
     {
       "path": "apps/core/agent-client.ts",
-      "hash": "sha256:f67c36b02d24f6f0afcc2f23e363d030cb28eea3ef681aba74c2ff4f8abc2b97"
+      "hash": "sha256:f16c6e919f7488260aed3fd1070e66ff25d215ad56cf5ea4a5f61cc3566a0392"
     },
     {
       "path": "apps/core/agent-runtime.ts",
@@ -31,7 +31,7 @@
     },
     {
       "path": "apps/core/assistant.ts",
-      "hash": "sha256:ec975f44db0e5f81072d578152041208b94a86e4bfcf5c95461f943e097f5ff9"
+      "hash": "sha256:adb05396d19ac4c49313cbb1901d685c1af9e3a3496561de08b0982a27564925"
     },
     {
       "path": "apps/core/astrbot-channel.ts",
@@ -51,7 +51,7 @@
     },
     {
       "path": "apps/core/classification.ts",
-      "hash": "sha256:8618f94b90d2d5fd87cfb09e8a540f14fd838a949848b93663274f7d89466d9c"
+      "hash": "sha256:218ee39dbbbb7700d4b282b1c4d2d37280033a0c5db0af1ea2a376b1df9ecc98"
     },
     {
       "path": "apps/core/cli.ts",
@@ -83,11 +83,11 @@
     },
     {
       "path": "apps/core/core.ts",
-      "hash": "sha256:637137dfde1bf1c00decadd9b2292518fa1a185956ad3634a5d4c8a1f7d7b384"
+      "hash": "sha256:0c9cb02b23e01f9733399e738113a1fac22f24df656f979f38bdc22af67436d8"
     },
     {
       "path": "apps/core/deadline.ts",
-      "hash": "sha256:f781453874477ff5fa73cc2d809a5db2ab0d08b097142c8c648d5c9b3d67306f"
+      "hash": "sha256:5f78f92f866e8323ea26b11a91effdd29b2860c568de30412f99e46ec9342b25"
     },
     {
       "path": "apps/core/document-operations.ts",
@@ -127,7 +127,7 @@
     },
     {
       "path": "apps/core/maintenance.ts",
-      "hash": "sha256:582d55cfa3bcf86b2c13f0b030d004f3fd7937d5ef6e815b4124fa2256d5a66c"
+      "hash": "sha256:9104165fc745359399cddf30a03175c5355674226a9e3e5461fc40e110ff7e0d"
     },
     {
       "path": "apps/core/message-split.ts",
@@ -171,7 +171,7 @@
     },
     {
       "path": "apps/core/scheduler.ts",
-      "hash": "sha256:ce25f0d4f13b820619aaff7734ad919bb89a48319dbad500fdc7e775a0ed3b5d"
+      "hash": "sha256:79dda863f3b58202986b0f3af77e1e025a43d1461cb8300701ce06152fb7ed61"
     },
     {
       "path": "apps/core/snapshot-backup.ts",
@@ -199,7 +199,7 @@
     },
     {
       "path": "apps/core/work-runner.ts",
-      "hash": "sha256:95498aeef6e3e7537db5d253ccd8e21ca5b494dd346d9d02cb3143e9b8b18ebb"
+      "hash": "sha256:3935321738f7df6004d6377a8c7d3bb288687c18ebbdc7c4189d81e7fefd2f98"
     },
     {
       "path": "apps/core/workspace.ts",
@@ -239,7 +239,7 @@
     },
     {
       "path": "integrations/astrbot/astrbot_plugin_secretary/bridge.py",
-      "hash": "sha256:9e6ded061aabc38c9b31325aab0df18f4b2b1102fafc2e60cf064f1dd30735b3"
+      "hash": "sha256:cba023c77213fa5ef9c196c2c2f9c019a53e92f277fbcf851ea9798dcd366882"
     },
     {
       "path": "integrations/astrbot/astrbot_plugin_secretary/main.py",
@@ -351,7 +351,7 @@
     },
     {
       "path": "resources/prompts/persona.md",
-      "hash": "sha256:e46103f3efd461eb6d0384f7676dc699b3685311a3615061f4850ed6e71c3ae2"
+      "hash": "sha256:eab6de1123dc662fa3652c11ee520afd825165a02acdd370a25070f71af7b9ba"
     },
     {
       "path": "resources/prompts/system.md",

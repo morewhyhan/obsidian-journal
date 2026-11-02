@@ -46,6 +46,7 @@ export async function withDeadline<T>(
  */
 export class Lease {
   private token = 0;
+  private nextToken = 0;
   private startedAt = 0;
   constructor(
     readonly name: string,
@@ -63,7 +64,7 @@ export class Lease {
   /** Returns a token when the lease is free or expired, otherwise null. */
   tryAcquire(): number | null {
     if (this.held) return null;
-    this.token += 1;
+    this.token = ++this.nextToken;
     this.startedAt = Date.now();
     return this.token;
   }

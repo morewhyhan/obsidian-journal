@@ -69,8 +69,10 @@ export async function toolMutation<T>(
       409,
     );
   const autonomous = metadata.agent_execution === "tools-v2";
-  if (metadata.read_only || (!autonomous && discussionOnly(row.body ?? "")))
-    throw new AppError("DISCUSSION_ONLY", "本轮只讨论或查询，不执行变更", 403);
+  const mode = metadata.interaction_mode ??
+    (metadata.read_only ? "discussion_read_only" : autonomous ? "autonomous_tools" : "interpret_request");
+  if (mode === "discussion_read_only" || mode === "proposal_only" || (!autonomous && discussionOnly(row.body ?? "")))
+    throw new AppError("DISCUSSION_ONLY", "本轮只讨论或保留建议，不执行笔记变更", 403);
   if (!autonomous && !documentMutationRequested(row.body ?? ""))
     throw new AppError(
       "DOCUMENT_AUTHORIZATION_REQUIRED",

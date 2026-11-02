@@ -6,6 +6,7 @@ import {
   HABIT_OCCURRENCE_STATUSES,
   TASK_UPDATE_STATUSES,
   CRITERION_STATUSES,
+  GOAL_STATUSES,
 } from "./types.js";
 const string = (maxLength = 1024) => ({
   type: "string",
@@ -204,6 +205,14 @@ const types = [
   "forget_fact",
   "link_diary",
   "project_diary",
+  "create_goal",
+  "update_goal",
+  "activate_goal",
+  "pause_goal",
+  "complete_goal",
+  "abandon_goal",
+  "add_milestone",
+  "record_goal_decision",
 ];
 export const actionSchema = {
   ...object(
@@ -278,6 +287,7 @@ export const actionSchema = {
             ...HABIT_OCCURRENCE_STATUSES,
             ...TASK_UPDATE_STATUSES,
             ...CRITERION_STATUSES,
+            ...GOAL_STATUSES,
           ]),
         ],
         description:
@@ -289,6 +299,30 @@ export const actionSchema = {
       due_at: nullable(time),
       verification: { enum: ["self_report", "tool"] },
       parent_task_id: nullable(string(100)),
+      goal_id: nullable(string(100)),
+      milestone_id: nullable(string(100)),
+      problem: string(4000),
+      desired_outcome: string(4000),
+      constraints: { type: "array", maxItems: 20, uniqueItems: true, items: string(500) },
+      non_goals: { type: "array", maxItems: 20, uniqueItems: true, items: string(500) },
+      principles: { type: "array", maxItems: 20, uniqueItems: true, items: string(500) },
+      review_policy: object({
+        cadence: { enum: ["weekly", "monthly", "quarterly", "on_change"] },
+        next_at: nullable(time),
+        triggers: { type: "array", maxItems: 12, uniqueItems: true, items: string(200) },
+      }, []),
+      completion_evidence: { type: "array", minItems: 1, maxItems: 12, uniqueItems: true, items: string(500) },
+      milestone_outcome: string(2000),
+      milestone_acceptance: { type: "array", minItems: 1, maxItems: 20, items: criterionSchema },
+      sequence: { type: "integer", minimum: 0 },
+      depends_on: { type: "array", maxItems: 12, uniqueItems: true, items: string(100) },
+      decision_question: string(1000),
+      decision_context: { type: "array", maxItems: 20, items: string(500) },
+      decision_options: { type: "array", minItems: 2, maxItems: 12, items: string(500) },
+      decision_chosen: string(500),
+      decision_rationale: string(2000),
+      decision_rejected: { type: "array", maxItems: 12, items: string(500) },
+      decision_valid_until: nullable(time),
       supporting_habit_ids: { type: "array", maxItems: 20, items: string(100) },
       business_date: date,
       quantity,
@@ -346,6 +380,10 @@ Object.assign(actionSchema, {
       if: { properties: { type: { const: type } } },
       then: { properties: { status: { enum: statuses } } },
     })),
+    {
+      if: { properties: { type: { const: "create_goal" } } },
+      then: { properties: { status: { enum: ["proposed", "active"] } } },
+    },
     {
       if: {
         properties: {
@@ -453,6 +491,13 @@ Object.assign(actionSchema, {
               "pause_focus",
               "resume_focus",
               "stop_focus",
+              "update_goal",
+              "activate_goal",
+              "pause_goal",
+              "complete_goal",
+              "abandon_goal",
+              "add_milestone",
+              "record_goal_decision",
             ],
           },
         },
@@ -479,6 +524,10 @@ Object.assign(actionSchema, {
       report_execution: ["execution"],
       set_planning: ["preferences", "expected_planning_version"],
       plan_day: ["business_date"],
+      create_goal: ["title", "problem", "desired_outcome", "acceptance"],
+      complete_goal: ["completion_evidence"],
+      add_milestone: ["milestone_outcome", "milestone_acceptance"],
+      record_goal_decision: ["decision_question", "decision_context", "decision_options", "decision_chosen", "decision_rationale"],
     }).map(([type, required]) => ({
       if: { properties: { type: { const: type } } },
       then: { required },

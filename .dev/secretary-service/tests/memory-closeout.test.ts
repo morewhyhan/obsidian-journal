@@ -10,6 +10,21 @@ afterEach(async () => {
   for (const fn of cleanups.splice(0)) await fn();
 });
 
+it("maintenance retires applied fact usage but preserves pending and recently applied usage", async () => {
+  const h = harness();
+  cleanups.push(() => h.close());
+  const insert = h.store.db.prepare("INSERT INTO fact_usage(fact_id,event_id,at,applied) VALUES(?,?,?,?)");
+  insert.run("fact", "old-applied", h.store.now(), 1);
+  insert.run("fact", "old-pending", h.store.now(), 0);
+  h.advance(400 * 86400000);
+  insert.run("fact", "recent", h.store.now(), 1);
+  const { cleanup } = await import("../apps/core/maintenance.js");
+  cleanup(h.store);
+  expect(h.store.db.prepare("SELECT event_id FROM fact_usage ORDER BY event_id").all()).toEqual([
+    { event_id: "old-pending" }, { event_id: "recent" },
+  ]);
+});
+
 it("F01 a forget interrupted after the files were written still clears the legacy note on restart", async () => {
   const h = harness("2026-10-24T09:00:00Z");
   cleanups.push(() => h.close());
@@ -93,6 +108,43 @@ it("F03 the understood watermark survives maintenance cleanup yet still stops at
   insert.run("i4", "qq", "owner", "i4", "four", "{}", now, now, "pending", 4, "classified", null);
   // Contiguity is required: the gap at 3 keeps 4 from advancing the watermark.
   expect(advanceUnderstood(h.store)).toBe(2);
+});
+
+it("F03 understanding survives complete history cleanup and restart without skipping the next unknown input", async () => {
+  const h = harness();
+  cleanups.push(() => h.close());
+  const insert = h.store.db.prepare(
+    "INSERT INTO inbox(id,channel,actor_ref,external_id,body,metadata_json,received_at,occurred_at,status,seq,classification,processed_at) VALUES(?,'qq','owner',?,'history','{}',?,?,'processed',?,'classified',?)",
+  );
+  for (const seq of [1, 2]) insert.run(`old-${seq}`, `old-${seq}`, h.store.now(), h.store.now(), seq, h.store.now());
+  expect(advanceUnderstood(h.store)).toBe(2);
+  h.store.db.prepare("DELETE FROM inbox WHERE status='processed'").run();
+  expect(advanceUnderstood(h.store)).toBe(2);
+  await h.restart();
+  expect(advanceUnderstood(h.store)).toBe(2);
+  const now = h.store.now();
+  h.store.db.prepare(
+    "INSERT INTO inbox(id,channel,actor_ref,external_id,body,metadata_json,received_at,occurred_at,status,seq,classification) VALUES('next','qq','owner','next','next','{}',?,?,'pending',3,'new')",
+  ).run(now, now);
+  expect(advanceUnderstood(h.store)).toBe(2);
+  h.store.db.prepare("UPDATE inbox SET classification='classified' WHERE id='next'").run();
+  expect(advanceUnderstood(h.store)).toBe(3);
+});
+
+it("new input sequences do not restart after terminal history has been cleaned", async () => {
+  const h = harness();
+  cleanups.push(() => h.close());
+  const first = h.input("第一条情况说明");
+  await h.core.receive(first);
+  h.store.db.prepare("UPDATE inbox SET status='processed',processed_at=? WHERE id=?").run(h.store.now(), first.id);
+  h.advance(400 * 86400000);
+  const { cleanup } = await import("../apps/core/maintenance.js");
+  cleanup(h.store);
+  expect(h.store.db.prepare("SELECT id FROM inbox WHERE id=?").get(first.id)).toBeUndefined();
+  await h.restart();
+  const next = h.input("新的情况说明");
+  await h.core.receive(next);
+  expect(h.store.db.prepare("SELECT seq FROM inbox WHERE id=?").get(next.id)).toEqual({ seq: 2 });
 });
 
 it("F01 a normal forget also clears the stored reply and the delivered receipt", async () => {

@@ -34,6 +34,7 @@ import {
   bufferMinutesFor,
   reflow,
 } from "./planning.js";
+import { applyGoalAction } from "./goals.js";
 type Context = {
   operation: string;
   source: Source;
@@ -278,6 +279,15 @@ function supporting(value: unknown, r: Registry) {
     throw new AppError("INVALID_RELATION", "关联习惯不存在");
   return [...new Set<string>(value)];
 }
+function validateGoalLink(registry: Registry, goalId: string | null | undefined, milestoneId: string | null | undefined) {
+  if (!goalId && !milestoneId) return;
+  const g = goalId ? registry.goals.find((item) => item.id === goalId) : undefined;
+  if (!g) throw new AppError("INVALID_RELATION", "关联目标不存在");
+  if (["achieved", "abandoned", "superseded"].includes(g.status))
+    throw new AppError("INVALID_RELATION", "不能把新事项关联到已结束目标");
+  if (milestoneId && !g.milestones.some((item) => item.id === milestoneId))
+    throw new AppError("INVALID_RELATION", "阶段不属于目标");
+}
 export function applyActions(
   registry: Registry,
   actions: Action[],
@@ -316,6 +326,11 @@ export function applyActions(
     }
   };
   for (const a of actions) {
+    const goalIds = applyGoalAction(registry, a, c);
+    if (goalIds) {
+      ids.push(...goalIds);
+      continue;
+    }
     const assistantIds =
       workAction(registry,a,c) ?? ruleAction(registry, a, assistantContext) ??
       automationAction(registry, a, c);
@@ -331,6 +346,8 @@ export function applyActions(
         const h: Habit = {
           ...base("habit", c),
           title: text(a.title, "习惯名称", 200),
+          goal_id: a.goal_id == null ? null : text(a.goal_id, "目标标识", 100),
+          milestone_id: a.milestone_id == null ? null : text(a.milestone_id, "阶段标识", 100),
           min_behavior: text(a.min_behavior, "最小行为", 500),
           minimum_quantity: quantity(a.minimum_quantity),
           optional_target: quantity(a.optional_target),
@@ -344,6 +361,7 @@ export function applyActions(
               ? "opportunistic"
               : reminderMode(a.reminder_mode),
         };
+        validateGoalLink(registry, h.goal_id, h.milestone_id);
         registry.habits.push(h);
         ids.push(h.id);
         break;
@@ -365,11 +383,14 @@ export function applyActions(
           done_at: null,
           parent_task_id:
             typeof a.parent_task_id === "string" ? a.parent_task_id : null,
+          goal_id: a.goal_id == null ? null : text(a.goal_id, "目标标识", 100),
+          milestone_id: a.milestone_id == null ? null : text(a.milestone_id, "阶段标识", 100),
           supporting_habit_ids: supporting(a.supporting_habit_ids, registry),
           approval: status === "draft" ? null : accept(c),
           note_refs: noteRefs(a.note_refs, c),
           progress: { criteria: {}, last_report: null },
         };
+        validateGoalLink(registry, t.goal_id, t.milestone_id);
         if (
           t.parent_task_id &&
           !registry.tasks.some((x) => x.id === t.parent_task_id)
@@ -454,6 +475,9 @@ export function applyActions(
           h.reminder_mode = reminderMode(a.reminder_mode);
         if (a.note_refs !== undefined) h.note_refs = noteRefs(a.note_refs, c);
         if (a.title !== undefined) h.title = text(a.title, "名称", 200);
+        if (a.goal_id !== undefined) h.goal_id = a.goal_id == null ? null : text(a.goal_id, "目标标识", 100);
+        if (a.milestone_id !== undefined) h.milestone_id = a.milestone_id == null ? null : text(a.milestone_id, "阶段标识", 100);
+        validateGoalLink(registry, h.goal_id, h.milestone_id);
         if (a.status !== undefined) {
           if (!(HABIT_STATUSES as readonly string[]).includes(String(a.status)))
             throw new AppError("INVALID_STATUS", "无效状态");
@@ -516,6 +540,9 @@ export function applyActions(
         if (a.supporting_habit_ids !== undefined)
           t.supporting_habit_ids = supporting(a.supporting_habit_ids, registry);
         if (a.note_refs !== undefined) t.note_refs = noteRefs(a.note_refs, c);
+        if (a.goal_id !== undefined) t.goal_id = a.goal_id == null ? null : text(a.goal_id, "目标标识", 100);
+        if (a.milestone_id !== undefined) t.milestone_id = a.milestone_id == null ? null : text(a.milestone_id, "阶段标识", 100);
+        validateGoalLink(registry, t.goal_id, t.milestone_id);
         if (a.status !== undefined) {
           if (
             !(TASK_UPDATE_STATUSES as readonly string[]).includes(

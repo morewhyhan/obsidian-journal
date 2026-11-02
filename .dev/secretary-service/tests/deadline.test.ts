@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { Lease, withDeadline } from "../apps/core/deadline.js";
 
 it("a lease expires on its own and a late release cannot free a newer holder", async () => {
@@ -23,4 +23,23 @@ it("deadline always settles and reports the label instead of hanging", async () 
   await expect(withDeadline("model", 10, slow)).rejects.toMatchObject({ code: "DEADLINE_EXCEEDED" });
   await expect(withDeadline("fast", 50, async () => 7)).resolves.toBe(7);
   expect(labels).toEqual([]);
+});
+
+it("a late holder cannot release a later lease after an intervening holder finished", () => {
+  vi.useFakeTimers();
+  try {
+    const lease = new Lease("turn", 10);
+    const first = lease.tryAcquire()!;
+    vi.advanceTimersByTime(11);
+    const second = lease.tryAcquire()!;
+    lease.release(second);
+    const third = lease.tryAcquire()!;
+    lease.release(first);
+    expect(lease.held).toBe(true);
+    expect(lease.tryAcquire()).toBeNull();
+    lease.release(third);
+    expect(lease.held).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
 });

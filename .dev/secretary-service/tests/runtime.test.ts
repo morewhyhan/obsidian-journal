@@ -40,3 +40,20 @@ it("a derived short current context is rebuilt from files and contains no diary 
   expect(fs.readFileSync(file, "utf8")).toContain("registry:1");
   expect(h.store.files.list()).toHaveLength(0);
 });
+
+it("QQ context distinguishes delivered text from replies still pending or delivery unknown", () => {
+  const h = setup();
+  for (const state of ["sent", "pending", "unknown"]) {
+    const input = { ...h.input(state), channel: "qq", actor_ref: "owner" };
+    h.store.db.prepare("INSERT INTO inbox(id,channel,actor_ref,external_id,body,metadata_json,received_at,occurred_at,status) VALUES(?,?,?,?,?,'{}',?,?,'processing')")
+      .run(input.id, input.channel, input.actor_ref, input.external_id, input.text, h.store.now(), h.store.now());
+    h.core.finishInput(input, `reply-${state}`);
+    if (state !== "pending") h.store.db.prepare("UPDATE outbox SET status=?,sent_at=?,finished_at=?,external_id='test-receipt' WHERE json_extract(metadata_json,'$.reply_group')=?")
+      .run(state, state === "sent" ? h.store.now() : null, h.store.now(), input.id);
+  }
+  const rows = h.core.context(h.input()).recent_interactions as any[];
+  expect(rows.find(x => x.text === "sent").reply).toBe("reply-sent");
+  expect(rows.find(x => x.text === "pending").reply).toBe("");
+  expect(rows.find(x => x.text === "unknown").reply).toBe("");
+  expect(rows.find(x => x.text === "unknown").reply_status).toBe("unknown");
+});

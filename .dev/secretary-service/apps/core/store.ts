@@ -40,6 +40,7 @@ const emptyRegistry = (): Registry => ({
   controls: [],
   diary_links: [],
   proposals: [],
+  goals: [],
 });
 export const emptyDay = (date: string): Day => ({
   schema_version: 1,
@@ -303,7 +304,16 @@ export class Store {
         this.commit("registry-migration:v2","maintenance","registry-migration",r=>{
           Object.assign(r,migrated);return {ids:[],message:"业务真源已升级为v2；未推断历史授权"};
         });
-      } else validateRegistry(beforeMigration);
+      } else {
+        const migrated = migrateRegistry(beforeMigration, this.now());
+        if (!Array.isArray(beforeMigration.goals)) {
+          this.lifecycle = "migrating";
+          this.commit("registry-migration:goals", "maintenance", "registry-migration-goals", (r) => {
+            Object.assign(r, migrated);
+            return { ids: [], message: "业务真源已补齐目标领域；未推断历史任务归属" };
+          });
+        } else validateRegistry(beforeMigration);
+      }
       this.db
         .prepare(
           "UPDATE outbox SET status='unknown',claimed_until=NULL,updated_at=? WHERE status='sending'",
@@ -900,13 +910,17 @@ function restoreDataIntoStage(root: string, payload: unknown) {
   });
   if (!seen.has(data.storage.registry))
     throw new AppError("EXPORT_INVALID", "缺少长期状态文件");
-  const registry = JSON.parse(
-    decoded
-      .find(
-        (x: any) => x.file === files.resolve(data.storage.registry, "internal"),
-      )!
-      .content.toString("utf8"),
-  );
+  const registryEntry = decoded.find(
+    (x: any) => x.file === files.resolve(data.storage.registry, "internal"),
+  )!;
+  const registry = JSON.parse(registryEntry.content.toString("utf8"));
+  // Older exports predate the first-class Goal aggregate. Upgrade the staged
+  // registry in memory; do not reject an otherwise valid backup or invent
+  // historical goal links.
+  if (!Array.isArray(registry.goals)) {
+    registry.goals = [];
+    registryEntry.content = Buffer.from(serialize(registry));
+  }
   if (
     !["tasks", "habits", "plans", "controls", "diary_links", "proposals"].every(
       (k) => Array.isArray(registry[k]),

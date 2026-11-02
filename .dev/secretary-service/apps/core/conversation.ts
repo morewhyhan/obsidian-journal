@@ -11,6 +11,29 @@ export function proposalRequested(text: string) {
   );
 }
 
+/**
+ * One interaction mode is persisted for the whole turn.  The model may still
+ * choose a natural reply inside the mode, but it cannot upgrade a discussion
+ * into an execution turn merely by selecting a tool.
+ */
+export type InteractionMode =
+  | "background_proposal"
+  | "discussion_read_only"
+  | "proposal_only"
+  | "autonomous_tools"
+  | "interpret_request";
+
+export function interactionMode(
+  text: string,
+  channel: string,
+  executionMode?: string,
+): InteractionMode {
+  if (channel === "coordinator") return "background_proposal";
+  if (discussionOnly(text))
+    return proposalRequested(text) ? "proposal_only" : "discussion_read_only";
+  return executionMode === "tools-v2" ? "autonomous_tools" : "interpret_request";
+}
+
 /** Deterministic vetoes protect discussion from model-proposed writes; they do not grant new permissions. */
 export function discussionOnly(text: string) {
   if (

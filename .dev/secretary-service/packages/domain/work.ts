@@ -5,7 +5,7 @@ import { canonicalJson, hash, id } from "../shared/identity.js";
 
 type Context={now:string;zone:string;source:Source;operation:string;userAuthorized:boolean;verified?:Map<string,Source>};
 export function referencedObject(r:Registry,ref:WorkRef) {
-  return ({task:r.tasks,habit:r.habits,plan:r.plans,proposal:r.proposals,rule:r.user_rules??[],note:[]})[ref.kind]
+  return ({goal:r.goals,task:r.tasks,habit:r.habits,plan:r.plans,proposal:r.proposals,rule:r.user_rules??[],note:[]})[ref.kind]
     .find(x=>x.id===ref.id);
 }
 export function resumeWorkStatus(f:Followup):"open"|"waiting_user"|"waiting_condition" {

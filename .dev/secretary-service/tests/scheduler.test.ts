@@ -541,6 +541,44 @@ it("a newer unread message pauses old proactive candidates and keeps them queued
   expect(receipt.every((row) => row.status !== "cancelled")).toBe(true);
 });
 
+it("an approved reminder is delivered even when language composition is unavailable", async () => {
+  const h = harness("2026-10-23T12:00:00Z");
+  cleanups.push(() => h.close());
+  h.core.agent = { executionMode: "tools-v2", compose: async () => { throw new Error("model unavailable"); } } as any;
+  await h.run(habitAction);
+  const sent: string[] = [];
+  const scheduler = new Scheduler(h.core, {
+    health: () => ({ connected: true, lastEventAt: null }),
+    send: async message => { sent.push(message.body); return { status: "sent", externalId: "sent" }; },
+  }, "user");
+  cleanups.push(async () => scheduler.close());
+  await scheduler.tick();
+  expect(sent).toContain(habitAction.min_behavior);
+});
+
+it.each(["cancel", "unrelated"])("ordinary replies wait for a same-clock input, then follow its %s interpretation", async relation => {
+  const h = harness();
+  cleanups.push(() => h.close());
+  h.core.agent = { executionMode: "tools-v2" } as any;
+  const at = h.store.now();
+  h.store.db.prepare("INSERT INTO inbox(id,channel,actor_ref,external_id,body,status,received_at,occurred_at,seq,classification,processed_at) VALUES('old-reply','qq','user','old-reply','answer','processed',?,?,1,'classified',?)").run(at, at, at);
+  h.core.queueReply({ ...h.input(), id: "old-reply", channel: "qq", actor_ref: "user" }, "原来的回答");
+  h.store.db.prepare("INSERT INTO inbox(id,channel,actor_ref,external_id,body,status,received_at,occurred_at,seq,classification) VALUES('stop-reply','qq','user','stop-reply','后面的不用发了','pending',?,?,2,'unclassified')").run(at, at);
+  const sent: string[] = [];
+  const scheduler = new Scheduler(h.core, {
+    health: () => ({ connected: true, lastEventAt: null }),
+    send: async message => { sent.push(message.body); return { status: "sent", externalId: "sent" }; },
+  }, "user");
+  cleanups.push(async () => scheduler.close());
+  await scheduler.tick(true);
+  expect(sent).toEqual([]);
+  expect(h.store.db.prepare("SELECT status FROM outbox WHERE message_kind='receipt'").get()).toMatchObject({ status: "pending" });
+  h.store.db.prepare("UPDATE inbox SET classification='classified',interpretation_json=?,status='processed',processed_at=? WHERE id='stop-reply'").run(JSON.stringify({ acts: [{ kind: relation === "cancel" ? "stop" : "query", relation, affects: relation === "cancel" ? ["contact"] : [], target_scope: "conversation" }] }), at);
+  await scheduler.tick(true);
+  expect(sent).toEqual(relation === "cancel" ? [] : ["原来的回答"]);
+  expect(h.store.db.prepare("SELECT status FROM outbox WHERE message_kind='receipt'").get()).toMatchObject({ status: relation === "cancel" ? "cancelled" : "sent" });
+});
+
 it("a reminder queued before a revocation is cancelled instead of delivered", async () => {
   const h = harness("2026-10-23T12:00:00Z");
   cleanups.push(() => h.close());

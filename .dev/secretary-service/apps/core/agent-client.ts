@@ -91,6 +91,7 @@ export class AstrBotClient implements AgentAdapter {
           "MODEL_INPUT_LIMIT",
           "MODEL_PROVIDER_FAILED",
           "MODEL_INVALID_FINAL",
+          "BACKGROUND_PREEMPTED",
         ].includes(failure?.error?.code)
           ? failure.error.code
           : "AGENT_UNAVAILABLE";

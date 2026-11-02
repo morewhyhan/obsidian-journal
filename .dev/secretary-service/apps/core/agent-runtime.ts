@@ -11,6 +11,7 @@ import { requireCapability } from "./policy.js";
 import { requireRuntimeCombination } from "./compatibility-runtime.js";
 import { newerInputBlocks } from "./classification.js";
 import {modelDeadline} from "./model-job.js";
+import { interactionMode } from "./conversation.js";
 
 export const CALL_OPERATIONS = ["apply_changes","save_proposals","resolve_proposals"] as const;
 export type BusinessCall = {
@@ -149,7 +150,12 @@ function executionUnits(core: Core, groups: ExecutionGroup[], atomic?: boolean) 
   return units.sort((a,b)=>groups.indexOf(a.members[0])-groups.indexOf(b.members[0]));
 }
 
-export function nativeSession(core: Core, inputId: string, mutate = false) {
+export function nativeSession(
+  core: Core,
+  inputId: string,
+  mutate = false,
+  mutationKind: "execute" | "proposal" = "execute",
+) {
   if(mutate)requireRuntimeCombination(core.store);
   const row = core.store.db.prepare("SELECT * FROM inbox WHERE id=?").get(inputId) as any;
   if (!row || row.status !== "processing" || JSON.parse(row.metadata_json).agent_execution !== "tools-v2")
@@ -159,6 +165,9 @@ export function nativeSession(core: Core, inputId: string, mutate = false) {
     meta.model_job_id && core.store.runtimeMeta().model_job?.id!==meta.model_job_id)
     throw new AppError("APPLICATION_SESSION_EXPIRED","作业期限或执行权已失效",403);
   if(meta.model_job_id)modelDeadline(core.store,true);
+  const mode = meta.interaction_mode ?? (meta.read_only ? "discussion_read_only" : "autonomous_tools");
+  if (mutate && (mode === "discussion_read_only" || (mode === "proposal_only" && mutationKind !== "proposal")))
+    throw new AppError("DISCUSSION_ONLY", "这轮只讨论或保留建议，还没有执行变更", 403);
   if(mutate)checkReads(core.store,inputId);
   if (mutate && row.channel === "coordinator") checkGrant(core.store,inputId);
   if (mutate && meta.policy_stamp !== policyStamp(core.store))
@@ -222,7 +231,7 @@ export async function businessCall(core: Core, args: BusinessCall) {
   if (args.operation === "save_proposals") {
     if (!groups.length) throw new AppError("EMPTY_PROPOSAL", "具体待定建议不能为空");
     const saveGroup = (registry: Registry, group: ExecutionGroup, op: string) => {
-      requireCapability(s,"business_write");nativeSession(core,input.id,true);
+      requireCapability(s,"business_write");nativeSession(core,input.id,true,"proposal");
       if (!group.actions.length || group.actions.length > 20) throw new AppError("BATCH_TOO_LARGE", "每份建议需要1到20个动作");
       if (group.actions.some(a => ["accept_proposal", "reject_proposal", "link_diary", "project_diary"].includes(a.type)))
         throw new AppError("INTERNAL_ACTION", "不能在建议中嵌套内部动作");
@@ -340,7 +349,7 @@ export async function businessCall(core: Core, args: BusinessCall) {
   const changed = new Set(results.flatMap(r => [...(r.updated_ids ?? []), ...(r.ids ?? [])]));
   const access = nativeSession(core, input.id).meta.observed_refs ?? nativeSession(core, input.id).meta.authorized_objects ?? [];
   const registry = s.registry();
-  const refs = [...registry.habits, ...registry.tasks, ...registry.plans, ...registry.proposals, ...(registry.followups??[]), ...core.assistant.view().objects]
+  const refs = [...registry.goals, ...registry.habits, ...registry.tasks, ...registry.plans, ...registry.proposals, ...(registry.followups??[]), ...core.assistant.view().objects]
     .filter(x => changed.has(x.id)).map(x => ({ id: x.id, version: x.version }));
   const result = { results, updated_refs: refs };
   s.db.prepare("UPDATE inbox SET metadata_json=json_set(metadata_json,'$.observed_refs',json(?)) WHERE id=?")
@@ -357,7 +366,7 @@ export async function businessCall(core: Core, args: BusinessCall) {
 }
 
 function registeredKind(r:Registry,id:string) {
-  for(const [kind,list] of [["task",r.tasks],["habit",r.habits],["plan",r.plans],["proposal",r.proposals],
+  for(const [kind,list] of [["goal",r.goals],["task",r.tasks],["habit",r.habits],["plan",r.plans],["proposal",r.proposals],
     ["rule",r.user_rules??[]],["work",r.followups??[]]] as [string,{id:string;version:number}[]][])
     if(list.some(x=>x.id===id))return {kind,version:list.find(x=>x.id===id)!.version};
   return {kind:"object",version:1};
@@ -419,8 +428,9 @@ export async function processNativeInput(core: Core, input: Input) {
   const bundle = core.context(input);
   const objects = [...bundle.items, ...bundle.plans, ...bundle.proposals, ...bundle.work, ...bundle.assistant.objects]
     .map(x => ({ id: x.id, version: x.version }));
-  s.db.prepare("UPDATE inbox SET metadata_json=json_set(metadata_json,'$.agent_execution','tools-v2','$.read_only',json('false'),'$.policy_stamp',?,'$.observed_refs',json(?),'$.turn_started_at',?) WHERE id=?")
-    .run(policyStamp(s), JSON.stringify(objects), s.now(), input.id);
+  const mode = interactionMode(input.text, input.channel, "tools-v2");
+  s.db.prepare("UPDATE inbox SET metadata_json=json_set(metadata_json,'$.agent_execution','tools-v2','$.interaction_mode',?,'$.read_only',json(?),'$.policy_stamp',?,'$.observed_refs',json(?),'$.turn_started_at',?) WHERE id=?")
+    .run(mode, mode === "discussion_read_only", policyStamp(s), JSON.stringify(objects), s.now(), input.id);
   // Preloaded facts are reads too. An empty/truncated bundle is never write authority.
   const registry=s.registry();
   recordQuery(s,input.id,{operation:"state",ids:[...bundle.items,...bundle.plans,...bundle.proposals].map(x=>x.id)},registry);

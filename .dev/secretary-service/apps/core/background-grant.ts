@@ -35,7 +35,7 @@ export function checkGrant(s:Store,inputId:string) {
     g.object_ids.some(x=>!f.work!.delegation!.object_ids.includes(x)))
     throw new AppError("BACKGROUND_GRANT_EXPIRED","后台委托缺失、已撤销或已变化",403);
   for(const ref of g.observed_versions) {
-    const item=[...s.registry().tasks,...s.registry().habits,...s.registry().plans,...s.registry().proposals,...s.registry().user_rules??[]].find(x=>x.id===ref.id);
+  const item=[...s.registry().goals,...s.registry().tasks,...s.registry().habits,...s.registry().plans,...s.registry().proposals,...s.registry().user_rules??[]].find(x=>x.id===ref.id);
     if(!item || item.version!==ref.version)throw new AppError("VERSION_CONFLICT","后台相关对象已变化",409);
   }
   return g;
@@ -69,7 +69,7 @@ export function advanceOwnGrant(s:Store,inputId:string,ids:string[]) {
   const row=s.db.prepare("SELECT metadata_json FROM inbox WHERE id=?").get(inputId) as any;
   const g:BackgroundGrant|undefined=row?JSON.parse(row.metadata_json).background_grant:undefined;
   if(!g)return;
-  const r=s.registry(),items=[...r.tasks,...r.habits,...r.plans,...r.proposals,...r.user_rules??[]];
+  const r=s.registry(),items=[...r.goals,...r.tasks,...r.habits,...r.plans,...r.proposals,...r.user_rules??[]];
   g.observed_versions=g.observed_versions.map(ref=>ids.includes(ref.id)?{...ref,version:items.find(x=>x.id===ref.id)?.version??ref.version}:ref);
   s.db.prepare("UPDATE inbox SET metadata_json=json_set(metadata_json,'$.background_grant',json(?)) WHERE id=?").run(JSON.stringify(g),inputId);
 }

@@ -918,7 +918,6 @@ export class Scheduler {
             const nativeBody = this.core.agent?.executionMode === "tools-v2"
               ? this.literal(candidate) ?? this.language.get(this.languageKey(candidate, kind === "follow_up"))
               : null;
-            if (this.core.agent?.executionMode === "tools-v2" && !nativeBody) continue;
             // Fallback wording stays factual: it repeats what the user asked for
             // or the saved next step, never a friendly template that pretends to
             // be the assistant's own voice.
@@ -947,7 +946,7 @@ export class Scheduler {
               });
             store.db
               .prepare(
-                "INSERT OR IGNORE INTO outbox(id,channel,recipient_ref,dedupe_key,target_refs_json,source_versions_json,message_kind,body,content_hash,scheduled_at,expires_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT OR IGNORE INTO outbox(id,channel,recipient_ref,dedupe_key,target_refs_json,source_versions_json,message_kind,body,content_hash,scheduled_at,expires_at,created_at,updated_at,metadata_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
               )
               .run(
                 id("out"),
@@ -988,6 +987,7 @@ export class Scheduler {
                 candidate.end,
                 store.now(),
                 store.now(),
+                JSON.stringify({ input_watermark: (store.db.prepare("SELECT coalesce(max(rowid),0) n FROM inbox").get() as { n: number }).n }),
               );
             store.db
               .prepare(
@@ -1019,7 +1019,32 @@ export class Scheduler {
           let pausedByInput = 0;
           for (const row of pending) {
             if (receiptsOnly && row.counts_as_proactive) continue;
-            if (row.counts_as_proactive && pausedBefore !== null && Date.parse(row.created_at) < pausedBefore) {
+            const replyGroup = JSON.parse(row.metadata_json).reply_group;
+            if (!row.counts_as_proactive && typeof replyGroup === "string") {
+              const newer = store.db.prepare(
+                "SELECT classification,interpretation_json FROM inbox WHERE rowid>(SELECT rowid FROM inbox WHERE id=?) AND channel=(SELECT channel FROM inbox WHERE id=?) AND actor_ref=? ORDER BY rowid",
+              ).all(replyGroup, replyGroup, row.recipient_ref) as { classification: string; interpretation_json: string | null }[];
+              let pause = false, cancel = false;
+              for (const input of newer) {
+                const acts = JSON.parse(input.interpretation_json ?? "{}").acts;
+                if (input.classification !== "classified" || !Array.isArray(acts) || !acts.length) { pause = true; continue; }
+                for (const act of acts) {
+                  if (act.relation === "unrelated") continue;
+                  if (act.target_scope === "conversation" && ["cancel", "replace"].includes(act.relation)) cancel = true;
+                  else pause = true;
+                }
+              }
+              if (cancel) {
+                store.db.prepare("UPDATE outbox SET status='cancelled',finished_at=?,updated_at=?,metadata_json=json_set(metadata_json,'$.cancel_reason','SUPERSEDED_BY_INPUT') WHERE id=?").run(store.now(), store.now(), row.id);
+                continue;
+              }
+              if (pause) { pausedByInput++; continue; }
+            }
+            const watermark = JSON.parse(row.metadata_json).input_watermark;
+            const newerThanCandidate = typeof watermark === "number"
+              ? !!store.db.prepare("SELECT 1 FROM inbox WHERE rowid>? AND channel<>'coordinator' AND status IN ('pending','processing') LIMIT 1").get(watermark)
+              : pausedBefore !== null && Date.parse(row.created_at) < pausedBefore;
+            if (row.counts_as_proactive && newerThanCandidate) {
               pausedByInput++;
               continue;
             }
@@ -1064,7 +1089,7 @@ export class Scheduler {
                 continue;
               }
               if (this.core.agent?.executionMode === "tools-v2") {
-                const currentText = this.literal(candidate) ?? this.language.get(this.languageKey(candidate, row.message_kind === "follow_up"));
+                const currentText = this.literal(candidate) ?? this.language.get(this.languageKey(candidate, row.message_kind === "follow_up")) ?? candidate.noticeBody ?? candidate.text;
                 if (!currentText || row.body !== currentText) {
                   // A queued body whose source text no longer matches would wait
                   // forever and block the queue head; after ten minutes it is
@@ -1112,8 +1137,6 @@ export class Scheduler {
               const first = available.find(
                 (c) =>
                   this.permitted(c.target.id, c) &&
-                  (this.core.agent?.executionMode!=="tools-v2" || this.literal(c)!==null ||
-                    this.language.has(this.languageKey(c,false)) || this.language.has(this.languageKey(c,true))) &&
                   pending.some(
                     (p) =>
                       p.dedupe_key === c.id + ":initial" ||

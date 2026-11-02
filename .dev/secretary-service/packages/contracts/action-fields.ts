@@ -1,13 +1,22 @@
 import { AppError, type Action } from "./types.js";
 
 const target="target_id expected_version";
-const habit="title min_behavior minimum_quantity optional_target status note_refs recurrence anchor reminder_mode";
-const task="title outcome acceptance due_at verification status parent_task_id supporting_habit_ids note_refs planning";
+const habit="title min_behavior minimum_quantity optional_target status note_refs recurrence anchor reminder_mode goal_id milestone_id";
+const task="title outcome acceptance due_at verification status parent_task_id supporting_habit_ids note_refs planning goal_id milestone_id";
+const goal="title problem desired_outcome acceptance constraints non_goals principles review_policy status";
 const automation="title kind timezone due_at delay_seconds schedule body to_diary strict quiet_exception";
 const window="kind window_start window_end available_windows duration_minutes next_action";
 // Shared by the published tool schema and the application boundary. A field
 // valid for one command must not be silently ignored by another command.
 export const actionFields: Record<string,string[]> = Object.fromEntries(Object.entries({
+  create_goal:goal,
+  update_goal:target+" "+goal,
+  activate_goal:target,
+  pause_goal:target,
+  complete_goal:target+" completion_evidence",
+  abandon_goal:target,
+  add_milestone:target+" milestone_outcome milestone_acceptance sequence depends_on",
+  record_goal_decision:target+" decision_question decision_context decision_options decision_chosen decision_rationale decision_rejected decision_valid_until",
   create_habit:habit, update_habit:target+" "+habit,
   create_task:task+" initial_plan", update_task:target+" "+task,
   report_habit:target+" business_date status quantity optional_target_met performed_at",

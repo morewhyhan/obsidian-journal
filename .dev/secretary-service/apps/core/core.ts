@@ -50,6 +50,7 @@ import {
   requestActionTypes,
   explicitCommitment,
   literalReportText,
+  interactionMode,
 } from "./conversation.js";
 import {
   bind,
@@ -135,7 +136,6 @@ export class Core {
   readonly turnLease = new Lease("turn", 150_000);
   /** A single turn may not hold the queue longer than this. */
   turnDeadlineMs = 45_000;
-  private foregroundStreak=0;
   operationKey(input:Input,actions:Action[],identity:string) {
     const literal=literalReportText(input.text);
     const normalized=literal !== null && actions.length === 1 && actions[0].type === "report_automation"
@@ -143,6 +143,7 @@ export class Core {
     return input.id+":"+hash(canonicalJson(normalized))+(identity.startsWith("native-group:") ? ":"+hash(identity) : "");
   }
   private stopping = false;
+  private foregroundStreak = 0;
   private idle: Promise<void> = Promise.resolve();
   private releaseIdle?: () => void;
   get working() {
@@ -1647,7 +1648,7 @@ export class Core {
         "UPDATE inbox SET metadata_json=json_set(metadata_json,'$.superseded_by',?) WHERE status='processing' AND channel=? AND actor_ref=? AND id<>?",
       )
       .run(input.id, input.channel, input.actor_ref, input.id);
-    const seq = ((this.store.db
+    const seq = Math.max(Number(this.store.runtimeMeta().received_seq ?? 0), Number(this.store.runtimeMeta().understood_seq ?? 0), (this.store.db
       .prepare("SELECT COALESCE(MAX(seq),0) AS n FROM inbox WHERE channel<>'coordinator'")
       .get() as { n: number }).n) + 1;
     this.store.db
@@ -1669,17 +1670,12 @@ export class Core {
         input.occurred_at,
         seq,
       );
+    this.store.updateRuntimeMeta(meta => ({ ...meta, received_seq: seq }));
     // Answering anything ends the forcing loop: no more "are you ready" once the
     // person has said something, whatever it was.
     answerAsk(this.store, input.actor_ref, this.store.now());
-    // The person just spoke again: whatever part of the previous answer has not
-    // left yet is already stale. Sent bubbles stay sent; the rest is cancelled and
-    // the new input decides what happens next.
-    this.store.db
-      .prepare(
-        "UPDATE outbox SET status='cancelled',finished_at=?,updated_at=? WHERE status='pending' AND message_kind='receipt' AND recipient_ref=? AND COALESCE(json_extract(metadata_json,'$.reply_group'),'')<>?",
-      )
-      .run(this.store.now(), this.store.now(), input.actor_ref, input.id);
+    // Delivery pauses older replies until this input is understood. Unrelated
+    // messages do not erase an answer the assistant still owes.
     // Production Agent owns language understanding. Legacy API adapters retain
     // their old protocol, but no natural-language shortcut can pre-empt this loop.
     if (this.agent?.executionMode === "tools-v2") {
@@ -2222,9 +2218,7 @@ export class Core {
       })
         .plus({ days: 1 })
         .toISODate(),
-      input_mode: input.channel === "coordinator" ? "background_proposal" : this.agent?.executionMode === "tools-v2" ? "autonomous_tools" : discussionOnly(input.text)
-        ? proposalRequested(input.text) ? "proposal_only" : "discussion_read_only"
-        : "interpret_request",
+      input_mode: interactionMode(input.text, input.channel, this.agent?.executionMode),
       business_date: localDate(this.store.clock(), this.store.config.timezone),
       timezone: this.store.config.timezone,
       items: selected.slice(0, 30),
@@ -2316,19 +2310,25 @@ export class Core {
       recent_interactions: (
         this.store.db
           .prepare(
-            "SELECT id,body,metadata_json,received_at FROM inbox WHERE status='processed' AND body IS NOT NULL ORDER BY rowid DESC LIMIT 6",
+            "SELECT id,channel,actor_ref,body,metadata_json,received_at FROM inbox WHERE status='processed' AND body IS NOT NULL ORDER BY rowid DESC LIMIT 6",
           )
           .all() as any[]
       )
         .reverse()
-        .map((row) => ({
+        .map((row) => {
+          const deliveries = row.channel === "qq" ? this.store.db.prepare(
+            "SELECT body,status FROM outbox WHERE channel=? AND recipient_ref=? AND json_extract(metadata_json,'$.reply_group')=? ORDER BY json_extract(metadata_json,'$.sequence'),rowid",
+          ).all(row.channel, row.actor_ref, row.id) as { body: string | null; status: string }[] : [];
+          const delivered = deliveries.filter(item => item.status === "sent");
+          return {
           input_id: row.id,
           text: row.body.slice(0, this.agent?.executionMode === "tools-v2" ? 1000 : 120),
-          reply: String(JSON.parse(row.metadata_json).reply ?? "").slice(0, this.agent?.executionMode === "tools-v2" ? 1800 : 80),
+          reply: (row.channel === "qq" ? delivered.map(item => item.body ?? "").join("\n") : String(JSON.parse(row.metadata_json).reply ?? "")).slice(0, this.agent?.executionMode === "tools-v2" ? 1800 : 80),
+          reply_status: row.channel !== "qq" ? "available" : deliveries.some(item => item.status === "unknown") ? "unknown" : delivered.length ? delivered.length === deliveries.length ? "sent" : "partial" : "not_delivered",
           at: DateTime.fromISO(row.received_at)
             .setZone(this.store.config.timezone)
             .toISO(),
-        })),
+        }; }),
       documents,
     };
     context.assistant.rules = context.assistant.rules
@@ -2535,12 +2535,9 @@ export class Core {
     try {
       for (;;) {
         if (this.stopping) return;
-        if(this.foregroundStreak>=3) {
-          this.foregroundStreak=0;
+        if (this.foregroundStreak >= 3) {
+          this.foregroundStreak = 0;
           this.assistant.startPlanning(true);
-          // Planning may be slow, but it can never hold the message queue open.
-          await withDeadline("planning-drain", 120_000, () => this.assistant.drain())
-            .catch(() => { this.foregroundStreak = 0; });
         }
         const row = this.store.db
           .prepare(
@@ -3159,6 +3156,14 @@ export class Core {
   private actionLabel(a: Action) {
     const r = this.store.registry();
     const labels: Record<string, string> = {
+      create_goal: "目标",
+      update_goal: "目标调整",
+      activate_goal: "目标开始",
+      pause_goal: "目标暂停",
+      complete_goal: "目标完成",
+      abandon_goal: "目标放弃",
+      add_milestone: "目标阶段",
+      record_goal_decision: "目标决策",
       create_task: "任务",
       create_habit: "习惯",
       create_automation: "消息安排",
@@ -3174,7 +3179,7 @@ export class Core {
     };
     const title =
       a.title ??
-      [...r.tasks, ...r.habits, ...(r.automations ?? [])].find(
+      [...r.goals, ...r.tasks, ...r.habits, ...(r.automations ?? [])].find(
         (x) => x.id === a.target_id,
       )?.title;
     return (labels[a.type] ?? "事项变更") + (title ? "：" + String(title) : "");
@@ -3184,6 +3189,7 @@ export class Core {
       d = this.store.day(date);
     return {
       assistant: this.assistant.view(),
+      goals: r.goals,
       planning: this.coordinator.view(date),
       tomorrow: this.coordinator.view(
         DateTime.fromISO(date).plus({ days: 1 }).toISODate()!,

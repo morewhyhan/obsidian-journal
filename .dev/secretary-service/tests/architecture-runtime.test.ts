@@ -109,6 +109,25 @@ it("I6 accepting a named, unchanged preparation closes only the assistant respon
   expect(h.store.registry().followups!.find(x=>x.id===f.id)!.work?.resolution?.kind).toBe("completed");
   expect(h.store.registry().tasks[0].status).toBe("ready");
 });
+it("a preempted background responsibility resumes with fresh execution identity and preserved retry allowance", async () => {
+  const h = setup(), file = "03. Manual/resume.md";
+  await h.run({type:"save_work",work:{key:"resume",summary:"准备材料",owner:"assistant",next_action:"写材料",
+    refs:[{kind:"note",path:file,role:"output"}],done_when:{kind:"material_verified",path:file,check:{kind:"exists_nonempty"}}}});
+  const inputs: string[] = [];
+  h.core.agent = { executionMode:"tools-v2", interpret:async input => {
+    inputs.push(input.id);
+    if (inputs.length === 1) throw new AppError("BACKGROUND_PREEMPTED", "先回应用户", 503);
+    await workspaceCall(h.core,{input_id:input.id,call_id:"resumed-write",operation:"write",path:file,content:"已恢复准备"});
+    return {action_groups:[],clarification:null,reply_intent:"discussion",discussion:"准备完成"};
+  }};
+  await runDelegatedWork(h.core);
+  expect(h.store.registry().followups![0].analysis).toMatchObject({status:"superseded",attempts:0});
+  await runDelegatedWork(h.core);
+  expect(inputs).toHaveLength(2);
+  expect(inputs[0]).not.toBe(inputs[1]);
+  expect(h.store.files.read(file)).toBe("已恢复准备");
+});
+
 it("D09 changing transport labels cannot duplicate one accepted logical intention",async()=>{
   const h=setup(),input=active(h);
   const invoke=(label:string,call:string,action=taskAction)=>businessCall(h.core,{input_id:input.id,call_id:call,operation:"apply_changes",action_groups:[{action_identity:label,actions:[action]}]});
@@ -117,7 +136,7 @@ it("D09 changing transport labels cannot duplicate one accepted logical intentio
   expect((await invoke("label-a","call-c",{...taskAction,title:"different"})).results[0].status).toBe("rejected");
   expect(h.store.registry().tasks).toHaveLength(1);
 });
-it("E2 after three foreground jobs one actual background preparation gets its turn",async()=>{
+it("E2 background preparation gets a turn during sustained foreground work without blocking the foreground queue",async()=>{
   const h=setup(),file="03. Manual/fair.md",order:string[]=[];
   await h.run({type:"save_work",work:{key:"fair",summary:"准备材料",owner:"assistant",next_action:"写到指定位置",
     refs:[{kind:"note",path:file,role:"output"}],done_when:{kind:"material_verified",path:file,check:{kind:"exists_nonempty"}}}});
@@ -129,7 +148,8 @@ it("E2 after three foreground jobs one actual background preparation gets its tu
   }};
   for(let i=0;i<6;i++)await h.core.receive(h.input("查询现状"));release();
   await expect.poll(()=>h.store.db.prepare("SELECT count(*) n FROM inbox WHERE channel='web' AND status IN ('pending','processing')").get()).toEqual({n:0});
-  expect(order.indexOf("background")).toBe(3);expect(h.store.files.read(file)).toBe("真实材料");
+  await expect.poll(() => h.store.files.list().includes(file)).toBe(true);
+  expect(order).toContain("background");expect(h.store.files.read(file)).toBe("真实材料");
 });
 it("E8 recovery release requires the current reviewed inventory and opens only its named scope across restart",async()=>{
   const h=setup();h.store.updateRuntimeMeta(m=>({...m,recovery_guard:{active:true,reason:"BACKUP_RESTORED",created_at:h.store.now()},budget_guard:true}));

@@ -4,6 +4,7 @@ dist/
 test-results/
 playwright-report/
 coverage/
+.test-tmp/
 .env
 *.sqlite*
 *.log
